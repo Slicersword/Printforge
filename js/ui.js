@@ -17,6 +17,17 @@ export function h(tag, attrs = {}, ...kids) {
   return el;
 }
 
+// Small Venn-style icon showing each boolean result (filled part = what you keep).
+function boolIcon(op) {
+  const a = '<circle cx="9" cy="12" r="6"/>', b = '<circle cx="15" cy="12" r="6"/>';
+  const fill = op === 'union'
+    ? '<circle cx="9" cy="12" r="6" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="6" fill="currentColor" stroke="none"/>'
+    : op === 'subtract'
+      ? '<path d="M9 6a6 6 0 1 0 0 12 6 6 0 0 0 4.9-2.5 6 6 0 0 1 0-7A6 6 0 0 0 9 6z" fill="currentColor" stroke="none"/>'
+      : '<path d="M12 7a6 6 0 0 0 0 10 6 6 0 0 0 0-10z" fill="currentColor" stroke="none"/>';
+  return h('span', { class: 'bicon', html: `<svg viewBox="0 0 24 24" aria-hidden="true">${fill}${a}${b}</svg>` });
+}
+
 // ---------------------------------------------------------------- numeric field with expressions
 const SAFE = /^[\d\s+\-*/().,%^a-z_]*$/i;
 const FN = { sin: (x) => Math.sin(x * Math.PI / 180), cos: (x) => Math.cos(x * Math.PI / 180), tan: (x) => Math.tan(x * Math.PI / 180), sqrt: Math.sqrt, abs: Math.abs, min: Math.min, max: Math.max, round: Math.round, floor: Math.floor, ceil: Math.ceil, pi: Math.PI, inch: 25.4 };
@@ -119,6 +130,11 @@ export function renderOutline(app) {
 
 // ---------------------------------------------------------------- inspector
 const ROT_ICON = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></svg>';
+const BOOL_ICON = {
+  union: '<svg viewBox="0 0 24 24"><circle cx="9.5" cy="12" r="6" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12" r="6" fill="currentColor" stroke="none"/></svg>',
+  subtract: '<svg viewBox="0 0 24 24"><path d="M9.5 6a6 6 0 1 0 0 12 6 6 0 0 0 4.9-2.5 6 6 0 0 1 0-7A6 6 0 0 0 9.5 6z" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12" r="6"/></svg>',
+  intersect: '<svg viewBox="0 0 24 24"><circle cx="9.5" cy="12" r="6"/><circle cx="14.5" cy="12" r="6"/><path d="M12 7.2a6 6 0 0 0 0 9.6 6 6 0 0 0 0-9.6z" fill="currentColor" stroke="none"/></svg>',
+};
 
 export function renderInspector(app) {
   const el = document.getElementById('inspector'); const s = app.scene; const sel = s.selected();
@@ -205,6 +221,12 @@ function multiPanel(app, sel) {
       h('button', { class: 'btn', onclick: () => app.cmd('drop') }, 'Drop to plate'),
       h('button', { class: 'btn', onclick: () => s.edit('make solid', () => sel.forEach((o) => { o.hole = false; })) }, 'All solid'),
       h('button', { class: 'btn', onclick: () => s.edit('make hole', () => sel.forEach((o) => { o.hole = true; })) }, 'All holes')),
+    h('fieldset', { class: 'boolset' }, h('legend', {}, 'Boolean'),
+      h('p', { class: 'note', style: { margin: '2px 0 8px' } }, 'Combine into one mesh. ', h('b', {}, sel[0]?.name || 'the first part'), ' is the base.'),
+      h('div', { class: 'actions', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
+        h('button', { class: 'btn bool', title: 'Merge all into one solid (A ∪ B)', onclick: () => app.cmd('bool:union') }, boolIcon('union'), 'Union'),
+        h('button', { class: 'btn bool', title: 'Cut the others out of the first part (A − B)', onclick: () => app.cmd('bool:subtract') }, boolIcon('subtract'), 'Subtract'),
+        h('button', { class: 'btn bool', title: 'Keep only the shared volume (A ∩ B)', onclick: () => app.cmd('bool:intersect') }, boolIcon('intersect'), 'Intersect'))),
     h('fieldset', {}, h('legend', {}, 'Align'),
       h('div', { class: 'actions', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
         al(0, -1, 'Left'), al(0, 0, 'Centre X'), al(0, 1, 'Right'),
@@ -229,6 +251,9 @@ export function renderSelbar(app) {
   const one = sel.length === 1 ? sel[0] : null;
   bar.replaceChildren(...[
     sel.length > 1 ? b('Group', 'group', 'Merge, cutting holes (Ctrl+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/></svg>') : null,
+    sel.length > 1 ? b('Union', 'bool:union', 'Merge into one mesh (A ∪ B)', BOOL_ICON.union) : null,
+    sel.length > 1 ? b('Subtract', 'bool:subtract', 'Cut the rest out of the first part (A − B)', BOOL_ICON.subtract) : null,
+    sel.length > 1 ? b('Intersect', 'bool:intersect', 'Keep only the shared volume (A ∩ B)', BOOL_ICON.intersect) : null,
     one?.type === 'group' ? b('Ungroup', 'ungroup', 'Split the group back into its shapes (Ctrl+Shift+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>') : null,
     b(sel.every((o) => o.hole) ? 'Solid' : 'Hole', 'toggleHole', 'Switch between solid and hole (H)', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.4"/></svg>'),
     h('span', { class: 'sep' }),

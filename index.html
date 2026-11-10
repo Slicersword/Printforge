@@ -88,6 +88,11 @@
       <button data-view="proj" title="Perspective or orthographic (5)" id="projBtn"><svg viewBox="0 0 24 24"><path d="M3 6l6 2v8l-6 2zM9 8h12M9 16h12"/></svg><span>Persp</span></button>
       <button data-view="measure" title="Measure between two points (M)" id="measureBtn"><svg viewBox="0 0 24 24"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg><span>Measure</span></button>
     </div>
+    <div class="toolbar" id="toolbar" role="group" aria-label="Transform tool" hidden>
+      <button data-tool="move" class="on" title="Move: drag the arrows (G)" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/></svg><span>Move</span></button>
+      <button data-tool="rotate" title="Rotate: drag the balls (shift snaps to 15°)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v4h-4"/></svg><span>Rotate</span></button>
+      <button data-tool="scale" title="Scale: drag the cubes (shift scales all sides)" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20V9M4 20h11M4 20l5-5"/><rect x="14" y="4" width="6" height="6" rx="1"/></svg><span>Scale</span></button>
+    </div>
     <div class="selbar" id="selbar" hidden></div>
     <div class="layerbar" id="layerbar" hidden>
       <label for="layerSlider">Layer</label>

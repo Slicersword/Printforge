@@ -49,6 +49,15 @@ PrintForge now has its own stencil, cookie cutter, badge, lithophane and relief 
 7. **Hollow with drain holes** for resin prints, and **mesh repair** (Kiri:Moto's Mesh:Tool is MIT).
 8. **Slicing in the browser** with Kiri:Moto (MIT), then straight to the G-code preview.
 
+## Boolean operations and the transform gizmo (November 2026)
+
+Added after looking at how PaliCAD and Bambu Studio handle these:
+
+- **Booleans**: PaliCAD's `pali_ijo` kernel exposes three operations — `unionOp`, `subtractOp` and `intersectOp` — and Bambu Studio's mesh-boolean tool offers Union, Difference (Subtract) and Intersection, with the message *"No overlapping region found. Boolean intersection failed."* PrintForge now has **Union**, **Subtract** (first part minus the rest) and **Intersect**, built on Manifold's own `union` / `subtract` / `intersection`. The result is baked into one watertight mesh. Bambu's overlap-failure wording is reused for the intersect-with-no-overlap case. Grouping is kept separate, because it stays editable (shapes and holes), whereas a boolean is final geometry.
+- **Transform gizmo**: both apps use a coloured three-axis gizmo (X red, Y green, Z blue) with Move / Rotate / Scale modes. PrintForge now draws arrows (move), balls (rotate) and cubes (scale) around the selection, hit-tested by projecting each axis tip to the screen. The existing numeric Position/Size/Rotation fields, plate-dragging and 90° turns still work; the gizmo is an addition, not a replacement.
+
+All of this is new MIT code using the Apache-2.0 Manifold kernel already in PrintForge — nothing is copied from PaliCAD (various licences) or Bambu Studio (AGPL), only the feature set and vernacular.
+
 ## AI services (researched November 2026)
 
 See `AI-PLATFORMS.md`. Gemini, Claude, OpenAI-compatible services, Zoo Text-to-CAD, Tripo3D and TRELLIS (via the Gradio client, Apache-2.0, loaded from jsDelivr) are built in.

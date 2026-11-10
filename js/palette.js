@@ -15,6 +15,8 @@ export function install(app) {
     ['Duplicate', 'Edit', () => app.cmd('duplicate'), 'Ctrl D'], ['Delete', 'Edit', () => app.cmd('delete'), 'Del'], ['Group (cut holes)', 'Edit', () => app.cmd('group'), 'Ctrl G'],
     ['Ungroup', 'Edit', () => app.cmd('ungroup'), 'Ctrl Shift G'], ['Hole ↔ solid', 'Edit', () => app.cmd('toggleHole'), 'H'], ['Turn 90°', 'Edit', () => app.cmd('rotZ'), 'R'],
     ['Drop to plate', 'Edit', () => app.cmd('drop'), 'D'], ['Split into parts', 'Edit', () => app.cmd('split')], ['Freeze as mesh', 'Edit', () => app.cmd('bake')],
+    ['Boolean: Union (merge)', 'Boolean', () => app.cmd('bool:union')], ['Boolean: Subtract (A − B)', 'Boolean', () => app.cmd('bool:subtract')], ['Boolean: Intersect (shared)', 'Boolean', () => app.cmd('bool:intersect')],
+    ['Move tool', 'Transform', () => app.view.setTool('move')], ['Rotate tool', 'Transform', () => app.view.setTool('rotate')], ['Scale tool', 'Transform', () => app.view.setTool('scale')],
     ['Measure', 'View', () => app.view.setMeasure(!app.view.measure), 'M'], ['Fit view', 'View', () => app.view.fit(), 'F'],
     ['Top view', 'View', () => app.view.setView('top'), '7'], ['Front view', 'View', () => app.view.setView('front'), '1'], ['Right view', 'View', () => app.view.setView('right'), '3'], ['Isometric view', 'View', () => app.view.setView('iso'), '0'],
     ['Design workspace', 'Workspace', () => app.setMode('design')], ['Prepare to print workspace', 'Workspace', () => app.setMode('prepare')], ['G-code preview workspace', 'Workspace', () => app.setMode('preview')],

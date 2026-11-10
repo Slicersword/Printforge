@@ -176,6 +176,14 @@ input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 .viewnav svg { width: 16px; height: 16px; stroke-width: 1.5; }
 .viewnav button:hover { background: var(--panel-2); color: var(--ink); }
 .viewnav button.on { background: var(--accent); color: var(--accent-ink); }
+.toolbar { position: absolute; top: 10px; left: 10px; display: flex; flex-direction: column; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; box-shadow: var(--shadow); }
+.toolbar button { border: 0; background: none; padding: 5px 9px 5px 7px; border-radius: 5px; font: 500 12.5px var(--font-num); color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.toolbar svg { width: 16px; height: 16px; stroke-width: 1.6; fill: none; stroke: currentColor; }
+.toolbar button:hover { background: var(--panel-2); color: var(--ink); }
+.toolbar button.on { background: var(--accent); color: var(--accent-ink); }
+.boolset .bool { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 4px; font-size: 11.5px; }
+.bicon svg, .selbar .bool-sized { width: 20px; height: 20px; }
+.bicon svg { width: 20px; height: 20px; stroke: currentColor; stroke-width: 1.4; }
 .dimlabel.measure { background: #F07326; color: #fff; border-color: #F07326; }
 details.cut summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .selbar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 3px; box-shadow: var(--shadow); max-width: calc(100% - 120px); overflow-x: auto; }
@@ -229,6 +237,9 @@ details.cut summary { cursor: pointer; font-size: 12.5px; font-weight: 600; colo
   .menu button[data-cmd="import"], .menu button[data-cmd="open"] { display: none; }
   .selbar { top: auto; bottom: 86px; }
   .layerbar { bottom: 90px; }
+  .toolbar { flex-direction: row; top: 8px; left: 8px; }
+  .toolbar button span { display: none; }
+  .toolbar button { padding: 6px; }
 }
 
 /* sketch editor */

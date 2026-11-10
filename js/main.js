@@ -50,7 +50,8 @@ class App {
     this.view.redraw(); this.emit('change');
     clearTimeout(this._save); this._save = setTimeout(() => store.set(STORE_KEY, JSON.stringify(s.toJSON())), 600);
   }
-  _selChanged() { renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus(); this.view.redraw(); }
+  _selChanged() { renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus(); this._updateToolbar(); this.view.redraw(); }
+  _updateToolbar() { const tb = document.getElementById('toolbar'); if (tb) tb.hidden = this.mode !== 'design' || !this.scene.selection.size; }
   refresh() { renderInspector(this); renderSelbar(this); renderOutline(this); this.updateHints(); this.renderStatus(); }
   updateHints() {
     document.getElementById('emptyHint').hidden = this.scene.objects.length > 0 || this.mode !== 'design';
@@ -180,6 +181,9 @@ class App {
       case 'selectAll': s.select(s.objects.map((o) => o.id)); break;
       case 'split': if (need()) this.split(ids); break;
       case 'bake': if (need()) this.bake(ids); break;
+      case 'bool:union': if (need()) this.boolean('union'); break;
+      case 'bool:subtract': if (need()) this.boolean('subtract'); break;
+      case 'bool:intersect': if (need()) this.boolean('intersect'); break;
       case 'new': if (!s.objects.length || confirmLoss('Start a new design?')) { s.reset(); this.applyPrinter(); this.view.fit(false); } break;
       case 'open': document.getElementById('fileOpen').click(); break;
       case 'save': this.saveProject(); break;
@@ -229,6 +233,52 @@ class App {
   bake(ids) {
     const s = this.scene;
     s.edit('freeze as mesh', () => ids.forEach((id) => { const o = s.get(id); if (!o) return; const w = worldManifold(o); const m = w.getMesh(); const r = this.addMesh(o.name, xyzOnly(m), m.triVerts, o.color); r.hole = o.hole; s.objects.splice(s.objects.indexOf(o), 1, r); s.selection.delete(id); s.selection.add(r.id); free(w); }));
+  }
+  /**
+   * Boolean of the whole selection, baked into one mesh.
+   * op: 'union' (merge), 'subtract' (first minus the rest), 'intersect' (shared volume).
+   * The first object in stacking order is the base; everything selected joins the result.
+   */
+  boolean(op) {
+    const s = this.scene;
+    const list = s.objects.filter((o) => s.selection.has(o.id) && o.visible !== false);
+    if (list.length < 2) { this.toast('Select two or more objects first (Shift+click).'); return; }
+    const LABEL = { union: 'union', subtract: 'subtract', intersect: 'intersect' }[op];
+    // Build every selected object's world solid up front, so a failure leaves the scene untouched.
+    const solids = [];
+    for (const o of list) {
+      try { solids.push(worldManifold(o)); }
+      catch (e) { solids.forEach(free); this.toast(`${o.name}: ${e.message}`); return; }
+    }
+    let result;
+    try {
+      if (op === 'union') result = K.Manifold.union(solids);
+      else if (op === 'intersect') result = K.Manifold.intersection(solids);
+      else { result = solids[0]; for (let i = 1; i < solids.length; i++) { const r = result.subtract(solids[i]); if (i > 1) free(result); result = r; } }
+    } catch (e) { solids.forEach(free); this.toast(`Boolean ${LABEL} failed: ${e.message}`); return; }
+    if (!result || result.isEmpty()) {
+      solids.forEach(free); if (op !== 'subtract') free(result);
+      // Bambu Studio's own message for this case.
+      this.toast(op === 'intersect'
+        ? 'No overlapping region found — the parts don’t intersect. Move them so they overlap and try again.'
+        : op === 'subtract'
+          ? 'Nothing left after subtracting — the cutter removed the whole part.'
+          : 'The boolean came out empty.');
+      return;
+    }
+    const mesh = result.getMesh();
+    const name = op === 'union' ? `${list[0].name} + ${list.length - 1} more` : op === 'subtract' ? `${list[0].name} cut` : `${list[0].name} ∩`;
+    s.edit(`boolean ${LABEL}`, () => {
+      const r = this.addMesh(name, xyzOnly(mesh), mesh.triVerts, list[0].color);
+      const idx = Math.min(...list.map((o) => s.objects.indexOf(o)));
+      s.objects = s.objects.filter((o) => !s.selection.has(o.id));
+      s.objects.splice(Math.min(idx, s.objects.length), 0, r);
+      s.selection = new Set([r.id]);
+    });
+    solids.forEach(free); free(result);
+    s.emit('select');
+    const verb = { union: 'Merged', subtract: 'Subtracted', intersect: 'Intersected' }[op];
+    this.toast(`${verb} ${list.length} parts into one mesh.`);
   }
   /** World meshes of everything printable. */
   printableParts(onlySel = false) {
@@ -337,11 +387,13 @@ class App {
   }
   showHelp() {
     const keys = [['Orbit', 'Left-drag empty space / right-drag'], ['Pan', 'Middle-drag / Shift+right-drag'], ['Zoom', 'Scroll / pinch'], ['Select more', 'Shift+click'], ['Duplicate while dragging', 'Alt+drag'], ['Free move (no snap)', 'Ctrl+drag'],
-      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90°', 'R'], ['Drop to plate', 'D'],
+      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90°', 'R'], ['Drop to plate', 'D'], ['Cycle move / rotate / scale', 'G'],
       ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Fit view', 'F'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
       ['Search every tool', 'Ctrl+K'], ['Quick box / cylinder / sphere', 'B / C / S'], ['Measure', 'M'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
     this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, b)))),
-      h('p', { class: 'note', style: { marginTop: '14px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'));
+      h('p', { class: 'note', style: { marginTop: '14px' } }, h('b', {}, 'Move, rotate, scale: '), 'select a part and drag the coloured arrows (move), balls (rotate) or cubes (scale) on the gizmo. Switch the tool top-left. Shift snaps rotation to 15° and scales every side at once; Ctrl drags without snapping.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Boolean: '), 'select two or more parts, then Union (merge), Subtract (cut the rest out of the first) or Intersect (keep the shared volume). The result is one mesh. Grouping instead keeps the shapes editable.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'));
   }
   modal(title, ...body) {
     const d = document.getElementById('modal'); let foot = null;
@@ -354,6 +406,7 @@ class App {
     this.mode = m; this.view.mode = m;
     document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === m)));
     document.getElementById('layerbar').hidden = m !== 'prepare' || !this.prepPanel;
+    this._updateToolbar();
     this.emit('mode', m); this._changed();
   }
 
@@ -363,6 +416,9 @@ class App {
     document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown')) this.closeMenus(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
     document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => { const r = this.view.setView(b.dataset.view); if (b.dataset.view === 'proj') b.querySelector('span').textContent = r ? 'Persp' : 'Ortho'; }));
+    const toolBtns = document.querySelectorAll('#toolbar [data-tool]');
+    toolBtns.forEach((b) => b.addEventListener('click', () => this.view.setTool(b.dataset.tool)));
+    this.on('tool', (t) => toolBtns.forEach((b) => { const on = b.dataset.tool === t; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }));
     document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode)));
     document.querySelectorAll('[data-drawer]').forEach((b) => b.addEventListener('click', () => { const app = document.getElementById('app'); const c = `show-${b.dataset.drawer}`; const on = !app.classList.contains(c); app.classList.remove('show-left', 'show-right'); if (on) app.classList.add(c); }));
     const dn = document.getElementById('docName');
@@ -404,6 +460,7 @@ class App {
     if (k === 'escape') return go(() => { if (this.view.measure) this.view.setMeasure(false); else s.clearSelection(); });
     if (k === 'm') return go(() => this.view.setMeasure(!this.view.measure));
     if (k === 'h') return go(() => this.cmd('toggleHole'));
+    if (k === 'g') return go(() => { const order = ['move', 'rotate', 'scale']; this.view.setTool(order[(order.indexOf(this.view.tool) + 1) % 3]); this.toast(`${this.view.tool[0].toUpperCase()}${this.view.tool.slice(1)} tool`); });
     if (k === 'r') return go(() => this.cmd('rotZ'));
     if (k === 'd') return go(() => this.cmd('drop'));
     if (k === 'f') return go(() => this.view.fit());

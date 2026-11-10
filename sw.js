@@ -1,5 +1,5 @@
 // Offline support. Network first, so a new upload shows up on the next reload; the cache is used when offline.
-const CACHE = 'printforge-v4';
+const CACHE = 'printforge-v5';
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'assets/icon.svg', 'vendor/manifold.js', 'vendor/manifold.wasm',
   'js/main.js', 'js/kernel.js', 'js/math.js', 'js/scene.js', 'js/shapes.js', 'js/renderer.js', 'js/viewport.js', 'js/ui.js', 'js/io.js',
   'js/printers.js', 'js/generators.js', 'js/sketch.js', 'js/script.js', 'js/printprep.js', 'js/textshape.js', 'js/gcode.js', 'js/palette.js', 'js/makers.js', 'js/ai.js', 'js/repair.js'];

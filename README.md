@@ -32,7 +32,8 @@ Any static server works (`npx serve`, nginx, Caddy, IIS).
 - **Shapes**: box (with rounded edges), cylinder (with top chamfer), sphere, half sphere, cone, tube, torus, wedge, pyramid, polygon, star, heart, slot, and **text** in any installed font.
 - **Holes and hardware**: screw holes M2–M8 with counterbore or countersink, nut traps, heat-set insert holes, teardrop holes that print without supports, and vent grids (round, hex, square, slot).
 - **Solids and holes**: turn any shape into a hole, select it with a solid, and **Group** to cut. Ungroup to edit again.
-- **Move, raise, rotate, resize** by dragging on the plate (snapping to 0.1–10 mm), the lift cone, quick 90° turns, or by typing numbers. Number fields accept sums such as `40/2+3` or `1.5*inch`.
+- **Transform gizmo**: select a part and drag the coloured handles in the view — red X, green Y, blue Z. Switch between **Move** (arrows), **Rotate** (balls) and **Scale** (cubes) with the toolbar at the top-left or the `G` key. Shift snaps rotation to 15° and scales every side at once; Ctrl drags without snapping. You can still drag on the plate, type exact numbers, or use quick 90° turns. Number fields accept sums such as `40/2+3` or `1.5*inch`.
+- **Boolean operations**: select two or more parts and choose **Union** (merge), **Subtract** (cut the rest out of the first part) or **Intersect** (keep only the shared volume). The result is one watertight mesh, ready to print or export. Grouping instead keeps the shapes editable.
 - **Align and space evenly**, mirror, duplicate (Alt-drag), copy and paste, undo and redo.
 - **Cut in two** along X, Y or height, with a live preview of the cut plane.
 - **Split into parts** (separate disconnected pieces) and **Freeze as mesh**.

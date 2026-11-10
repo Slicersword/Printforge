@@ -1,13 +1,15 @@
 // 3D viewport: draws the scene and handles pointer interaction.
 import { Renderer, hex, normalMatrix } from './renderer.js';
-import { transformPoint, rayTri, rayAabb, v3, clamp, deg, fmt } from './math.js';
+import { transformPoint, rayTri, rayAabb, v3, clamp, deg, fmt, eulerMatrix, eulerFromMatrix } from './math.js';
 import { K, renderData } from './kernel.js';
+import { axisMap } from './ui.js';
 
 export class Viewport {
   constructor(app, canvas) {
     this.app = app; this.scene = app.scene; this.canvas = canvas;
     this.r = new Renderer(canvas);
     this.needs = true; this.mode = 'design'; this.showOverhang = false;
+    this.tool = 'move'; // move | rotate | scale — the transform gizmo
     this.pointers = new Map();
     this.labels = [];
     this._initHandle();
@@ -18,9 +20,58 @@ export class Viewport {
   }
   redraw() { this.needs = true; }
 
+  setTool(t) { if (this.tool === t) return; this.tool = t; this.app.emit?.('tool', t); this.redraw(); }
+
   _initHandle() {
+    // Lift cone kept for the old top handle (used as the Move-Z grip too).
     const cone = K.Manifold.cylinder(7, 3.2, 0, 24).add(K.Manifold.cylinder(5, 0.9, 0.9, 12).translate([0, 0, -5]));
     this.handleRD = renderData({ man: cone, render: null });
+    // Gizmo handle shapes, each centred on its own tip so a model matrix just places + scales it.
+    const arrow = K.Manifold.cylinder(9, 2.6, 0, 20).translate([0, 0, -4.5])
+      .add(K.Manifold.cylinder(6, 0.8, 0.8, 10).translate([0, 0, -10.5]));
+    this.arrowRD = renderData({ man: arrow, render: null });
+    const cube = K.Manifold.cube([5, 5, 5], true);
+    this.cubeRD = renderData({ man: cube, render: null });
+    const ball = K.Manifold.sphere(3.3, 16);
+    this.ballRD = renderData({ man: ball, render: null });
+  }
+
+  // ------------------------------------------------------------ transform gizmo
+  // Axis colours: X red, Y green, Z blue (the universal CAD convention, as in Bambu Studio / PaliCAD).
+  _axisRGB(i, hot) {
+    const base = [[0.92, 0.26, 0.28], [0.30, 0.74, 0.34], [0.26, 0.52, 0.95]][i];
+    return hot ? [Math.min(1, base[0] + 0.25), Math.min(1, base[1] + 0.25), Math.min(1, base[2] + 0.25)] : base;
+  }
+  /** Where the gizmo sits and how big, from the current selection box. Returns null if nothing is selected. */
+  _gizmo() {
+    const sel = this.scene.selected();
+    if (!sel.length || this.mode !== 'design') return null;
+    const box = this.scene.selectionBox(sel); if (!box) return null;
+    const c = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2];
+    const span = Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
+    const screen = this.r.cam.dist / 300;            // keep roughly constant size on screen
+    const len = Math.max(span * 0.62 + 10, 18 * screen); // reach past the part
+    return { c, len, s: screen, box };
+  }
+  /** Screen positions of each axis tip, for hit-testing and drawing. */
+  _gizmoTips(g) {
+    const tips = [];
+    for (let i = 0; i < 3; i++) {
+      const dir = [0, 0, 0]; dir[i] = 1;
+      const pos = [g.c[0] + dir[0] * g.len, g.c[1] + dir[1] * g.len, g.c[2] + dir[2] * g.len];
+      tips.push({ i, dir, pos, q: this.r.project(pos) });
+    }
+    return tips;
+  }
+  _gizmoHit(x, y) {
+    const g = this._gizmo(); if (!g) return null;
+    const grab = this.tool === 'rotate' ? 20 : 17;
+    let best = null;
+    for (const t of this._gizmoTips(g)) {
+      if (!t.q) continue; const d = Math.hypot(t.q[0] - x, t.q[1] - y);
+      if (d < grab && (!best || d < best.d)) best = { axis: t.i, dir: t.dir, d, g };
+    }
+    return best;
   }
 
   // ------------------------------------------------------------ drawing
@@ -45,15 +96,10 @@ export class Viewport {
       box = s.selectionBox(sel);
       if (box) {
         extras.lines.push({ data: boxLines(box), color: [...this.r.theme.accent, 0.75] });
-        const top = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, box.max[2] + 9];
-        this.handlePos = top;
-        const sc = this.r.cam.dist / 300;
-        const m = new Float64Array([sc, 0, 0, 0, 0, sc, 0, 0, 0, 0, sc, 0, top[0], top[1], top[2] + 2 * sc, 1]);
-        this.handleScale = sc;
-        extras.handles.push({ rd: this.handleRD, model: m, normalMat: normalMatrix(m), rgb: this.r.theme.accent, alpha: 0.95, selected: false });
         // shadow footprint on the plate
         if (box.min[2] > 0.01) extras.lines.push({ data: rectLines(box, 0), color: [...this.r.theme.accent, 0.35] });
-      }
+        this._drawGizmo(extras);
+      } else this.handlePos = null;
     } else this.handlePos = null;
     if (this.extraLines) extras.lines.push(...this.extraLines);
     const ms = this.measure;
@@ -65,6 +111,38 @@ export class Viewport {
     if (ms?.a) { const b = ms.b || ms.hover; if (b) { const d = [b[0] - ms.a[0], b[1] - ms.a[1], b[2] - ms.a[2]]; this._label([(ms.a[0] + b[0]) / 2, (ms.a[1] + b[1]) / 2, (ms.a[2] + b[2]) / 2], `${fmt(Math.hypot(...d), 2)} mm  (Δx ${fmt(Math.abs(d[0]), 1)} · Δy ${fmt(Math.abs(d[1]), 1)} · Δz ${fmt(Math.abs(d[2]), 1)})`, 'measure'); } }
     this.app.emit?.('drawn');
   }
+  _drawGizmo(extras) {
+    const g = this._gizmo(); if (!g) { this.handlePos = null; return; }
+    this.handlePos = null; // the old lift handle is replaced by the Z arrow
+    const rd = this.tool === 'scale' ? this.cubeRD : this.tool === 'rotate' ? this.ballRD : this.arrowRD;
+    const hotAxis = this._dragAxis != null ? this._dragAxis : this._hoverAxis;
+    for (const t of this._gizmoTips(g)) {
+      const hot = hotAxis === t.i;
+      const rgb = this._axisRGB(t.i, hot);
+      // axis stem
+      extras.lines.push({ data: new Float32Array([...g.c, ...t.pos]), color: [...rgb, hot ? 1 : 0.85], noDepth: true });
+      // handle at the tip, oriented so the arrow points outward along its axis
+      const sc = g.s * (hot ? 1.18 : 1);
+      const m = this._axisHandleMatrix(t.i, t.pos, sc);
+      extras.handles.push({ rd, model: m, normalMat: normalMatrix(m), rgb, alpha: 1, selected: false });
+    }
+    this._gizmoCache = g;
+  }
+  /** Column-major model matrix: scale by sc, rotate local +Z onto the given world axis, translate to pos. */
+  _axisHandleMatrix(axis, pos, sc) {
+    // local +Z maps to: X axis -> +X (rotate +90° about Y), Y axis -> +Y (rotate -90° about X), Z axis -> +Z (identity)
+    let R;
+    if (axis === 0) R = [0, 0, -1, 1, 0, 0, 0, -1, 0];     // columns of rotation sending Z->X
+    else if (axis === 1) R = [1, 0, 0, 0, 0, 1, 0, -1, 0];  // Z->Y
+    else R = [1, 0, 0, 0, 1, 0, 0, 0, 1];                   // Z->Z
+    return new Float64Array([
+      R[0] * sc, R[1] * sc, R[2] * sc, 0,
+      R[3] * sc, R[4] * sc, R[5] * sc, 0,
+      R[6] * sc, R[7] * sc, R[8] * sc, 0,
+      pos[0], pos[1], pos[2], 1,
+    ]);
+  }
+
   _labels(box) {
     const host = this.canvas.parentElement;
     this.labels.forEach((l) => l.remove()); this.labels = [];
@@ -108,10 +186,6 @@ export class Viewport {
     const { o, d } = this.r.ray(x, y); if (Math.abs(d[2]) < 1e-6) return null;
     const t = (z - o[2]) / d[2]; if (t < 0) return null; return v3.add(o, v3.scale(d, t));
   }
-  handleHit(x, y) {
-    if (!this.handlePos) return false; const q = this.r.project([this.handlePos[0], this.handlePos[1], this.handlePos[2] + 4 * this.handleScale]);
-    return q && Math.hypot(q[0] - x, q[1] - y) < 16;
-  }
 
   // ------------------------------------------------------------ input
   _bind() {
@@ -133,9 +207,9 @@ export class Viewport {
     if (this.measure && btn === 0) { this.state.mode = 'orbit'; this.state.measureClick = true; return; }
     if (btn === 1 || (btn === 2 && e.shiftKey)) { this.state.mode = 'pan'; return; }
     if (btn === 2) { this.state.mode = 'orbit'; return; }
-    if (this.mode === 'design' && this.handleHit(x, y)) {
-      this.state.mode = 'lift'; this.state.start = this.scene.selected().map((o) => [...o.pos]); this.state.z0 = this._liftZ(x, y);
-      this.scene.begin('raise'); return;
+    if (this.mode === 'design') {
+      const gh = this._gizmoHit(x, y);
+      if (gh) { this._startGizmo(gh, x, y); return; }
     }
     const hit = this.pick(x, y);
     if (hit && this.mode === 'design' && !hit.obj.locked) {
@@ -154,7 +228,12 @@ export class Viewport {
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
     const st = this.state;
     if (this.measure && this.measure.a && !this.measure.b) { this.measure.hover = this._measurePoint(e.offsetX, e.offsetY); this.redraw(); }
-    if (!st) return;
+    if (!st) {
+      // hover-highlight gizmo axes when idle
+      if (this.mode === 'design') { const gh = this._gizmoHit(e.offsetX, e.offsetY); const a = gh ? gh.axis : null; if (a !== this._hoverAxis) { this._hoverAxis = a; this.canvas.style.cursor = a != null ? 'pointer' : ''; this.redraw(); } }
+      return;
+    }
+    if (st.mode === 'gizmo') { this._dragGizmo(e); return; }
     if (st.mode === 'touch2') { this._touch2(); return; }
     const x = e.offsetX, y = e.offsetY, dx = x - st.lx, dy = y - st.ly; st.lx = x; st.ly = y;
     if (!st.moved && Math.hypot(x - st.x0, y - st.y0) > 3) st.moved = true;
@@ -177,13 +256,6 @@ export class Viewport {
       this.scene.selected().forEach((o, i) => { o.pos = [st.start[i][0] + ddx, st.start[i][1] + ddy, st.start[i][2]]; });
       this.app.onLiveChange(); this.redraw();
     }
-    if (st.mode === 'lift') {
-      const z = this._liftZ(x, y); if (z == null) return;
-      const snap = e.ctrlKey || e.metaKey ? 0 : this.scene.settings.snap;
-      let dz = z - st.z0; if (snap) dz = Math.round(dz / snap) * snap;
-      this.scene.selected().forEach((o, i) => { o.pos = [st.start[i][0], st.start[i][1], st.start[i][2] + dz]; });
-      this.dragging = true; this.app.onLiveChange(); this.redraw();
-    }
   }
   _up(e) {
     this.pointers.delete(e.pointerId);
@@ -194,6 +266,7 @@ export class Viewport {
       if (p) { if (!ms.a || ms.b) { ms.a = p; ms.b = null; } else ms.b = p; }
       this.state = null; this.redraw(); return;
     }
+    if (st.mode === 'gizmo') { this.dragging = false; this._dragAxis = null; this.labels.forEach((l) => l.remove()); this.labels = []; if (st.began) this.scene.commit(); this.state = null; this.redraw(); return; }
     if (st.mode === 'drag' || st.mode === 'lift') { this.dragging = false; this.scene.commit(); }
     else if (st.mode === 'maybeDrag' && !st.moved) {
       if (st.toggleOnClick) this.scene.select(st.hit.obj.id, true);
@@ -201,14 +274,78 @@ export class Viewport {
     } else if (st.clickEmpty && !st.moved) this.scene.clearSelection();
     this.state = null; this.redraw();
   }
-  _abortDrag() { if (this.state && (this.state.mode === 'drag' || this.state.mode === 'lift')) { this.dragging = false; this.scene.commit(); } }
-  _liftZ(x, y) {
-    const hp = this.handlePos; if (!hp) return null; const { o, d } = this.r.ray(x, y);
-    // closest point between ray and vertical line through handle
-    const w0 = v3.sub(o, [hp[0], hp[1], 0]); const b = d[2]; const dd = v3.dot(d, w0), e2 = w0[2];
-    const denom = 1 - b * b; if (denom < 1e-6) return null;
-    const s = (b * e2 - dd) / denom; const t = (e2 - b * dd) / denom; void s;
-    return t;
+  _abortDrag() { if (this.state && (this.state.mode === 'drag' || this.state.mode === 'lift' || this.state.mode === 'gizmo')) { this.dragging = false; this._dragAxis = null; if (this.state.began) this.scene.commit(); } }
+
+  // ------------------------------------------------------------ gizmo dragging
+  _startGizmo(gh, x, y) {
+    const s = this.scene; const sel = s.selected();
+    const g = gh.g; const c = g.c;
+    this._dragAxis = gh.axis;
+    const st = { mode: 'gizmo', axis: gh.axis, dir: gh.dir, c, began: false, x0: x, y0: y, lx: x, ly: y,
+      startPos: sel.map((o) => [...o.pos]), startRot: sel.map((o) => [...o.rot]), startScale: sel.map((o) => [...o.scale]),
+      box: g.box, len: g.len, accum: 0 };
+    // Anchor point for translate/scale: where the axis ray is closest to the pointer ray now.
+    st.p0 = this._axisParam(x, y, c, gh.dir);
+    // Anchor angle for rotate: pointer angle around the axis in screen space, about the projected centre.
+    const qc = this.r.project(c); st.qc = qc;
+    st.a0 = qc ? Math.atan2(y - qc[1], x - qc[0]) : 0;
+    this.state = st; this.dragging = true;
+  }
+  /** Signed distance of the pointer's closest approach along the world axis line through c. */
+  _axisParam(x, y, c, dir) {
+    const { o, d } = this.r.ray(x, y);
+    // closest point between ray (o,d) and line (c,dir): solve for t along the axis
+    const w0 = v3.sub(o, c);
+    const a = v3.dot(d, d), b = v3.dot(d, dir), e = v3.dot(dir, dir);
+    const dd = v3.dot(d, w0), ee = v3.dot(dir, w0);
+    const denom = a * e - b * b; if (Math.abs(denom) < 1e-9) return 0;
+    return (a * ee - b * dd) / denom; // parameter along dir (world mm)
+  }
+  _dragGizmo(e) {
+    const st = this.state; const s = this.scene; const sel = s.selected();
+    const x = e.offsetX, y = e.offsetY;
+    if (!st.began && Math.hypot(x - st.x0, y - st.y0) < 2) return;
+    if (!st.began) { s.begin(this.tool === 'rotate' ? 'rotate' : this.tool === 'scale' ? 'scale' : 'move'); st.began = true; }
+    const snap = (e.ctrlKey || e.metaKey) ? 0 : this.scene.settings.snap;
+    const axis = st.axis; const L = 'XYZ'[axis];
+    if (this.tool === 'move') {
+      let delta = this._axisParam(x, y, st.c, st.dir) - st.p0;
+      if (snap) delta = Math.round(delta / snap) * snap;
+      sel.forEach((o, i) => { o.pos = st.startPos[i].map((p, k) => (k === axis ? p + delta : p)); });
+      this._gizmoLabel(st, `${L}  ${fmt(delta, 2)} mm`);
+    } else if (this.tool === 'scale') {
+      const cur = this._axisParam(x, y, st.c, st.dir);
+      const span = Math.max(1e-3, st.box.max[axis] - st.box.min[axis]);
+      const ref = Math.max(span / 2, st.len || span); // distance of the handle from centre
+      let f = (ref + (cur - st.p0)) / ref; f = clamp(f, 0.05, 50);
+      const uniform = e.shiftKey;
+      sel.forEach((o, i) => {
+        const map = axisMap(o);
+        o.scale = st.startScale[i].map((v, k) => (uniform || k === map[axis] ? v * f : v));
+      });
+      // keep the selection sitting where it was on the plate
+      sel.forEach((o) => { const nb = s.worldBox(o); if (nb) o.pos = [o.pos[0], o.pos[1], o.pos[2] + (st.box.min[2] - nb.min[2])]; });
+      this._gizmoLabel(st, uniform ? `scale ${fmt(f * 100, 0)}%` : `${L}  ${fmt(f * 100, 0)}%`);
+    } else { // rotate
+      const qc = st.qc || this.r.project(st.c); if (!qc) return;
+      let ang = (Math.atan2(y - qc[1], x - qc[0]) - st.a0) / deg;
+      // normalise to -180..180 and flip so screen-clockwise reads as positive about the axis facing the camera
+      while (ang > 180) ang -= 360; while (ang < -180) ang += 360;
+      let snapped = e.shiftKey ? Math.round(ang / 15) * 15 : ang;
+      const d = snapped - st.accum; st.accum = snapped;
+      sel.forEach((o) => {
+        const axisVec = [0, 0, 0]; axisVec[axis] = 1;
+        const Rw = eulerMatrix(axisVec.map((a) => a * d)); const R = eulerMatrix(o.rot);
+        const m = new Float64Array(16); for (let cc = 0; cc < 4; cc++) for (let rr = 0; rr < 4; rr++) { let sum = 0; for (let k = 0; k < 4; k++) sum += Rw[k * 4 + rr] * R[cc * 4 + k]; m[cc * 4 + rr] = sum; }
+        o.rot = eulerFromMatrix(m);
+      });
+      this._gizmoLabel(st, `${L}  ${fmt(snapped, 1)}°`);
+    }
+    this.dragging = true; this.app.onLiveChange(); this.redraw();
+  }
+  _gizmoLabel(st, text) {
+    this.labels.forEach((l) => l.remove()); this.labels = [];
+    this._label(st.c, text, 'measure');
   }
   _pan(dx, dy) {
     const cam = this.r.cam; const h = this.canvas.clientHeight;
