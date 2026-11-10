@@ -140,6 +140,7 @@ export function renderInspector(app) {
   const el = document.getElementById('inspector'); const s = app.scene; const sel = s.selected();
   if (app.mode === 'prepare' && app.prepPanel) { el.replaceChildren(...app.prepPanel()); return; }
   if (app.mode === 'preview' && app.previewPanel) { el.replaceChildren(...app.previewPanel().filter(Boolean)); return; }
+  if (app.mode === 'design' && app.toolPanel) { el.replaceChildren(...app.toolPanel().filter(Boolean)); return; }
   if (!sel.length) { el.replaceChildren(...app.platePanel()); return; }
   if (sel.length > 1) { el.replaceChildren(...multiPanel(app, sel)); return; }
   const o = sel[0]; const box = s.worldBox(o);
@@ -159,11 +160,16 @@ export function renderInspector(app) {
     parts.push(h('fieldset', {}, h('legend', {}, 'Position (centre X, Y · bottom Z)'), xyz(['X', 'Y', 'Z'], [c[0], c[1], box.min[2]], moveTo)));
     const resize = (axis, val) => { if (val <= 0) return; app.resize(o, axis, val, app.lockRatio); };
     parts.push(h('fieldset', {}, h('legend', {}, 'Size'), xyz(['W', 'D', 'H'], size, resize),
-      h('label', { class: 'note', style: { display: 'flex', gap: '6px', alignItems: 'center' } }, h('input', { type: 'checkbox', checked: app.lockRatio, onchange: (e) => { app.lockRatio = e.target.checked; } }), 'Keep proportions')));
+      h('label', { class: 'note', style: { display: 'flex', gap: '6px', alignItems: 'center' } }, h('input', { type: 'checkbox', checked: app.lockRatio, onchange: (e) => { app.lockRatio = e.target.checked; renderInspector(app); } }), 'Keep proportions (size and scale)')));
+    const map = axisMap(o); const pct = [0, 1, 2].map((w) => Math.abs(o.scale[map[w]]) * 100);
+    parts.push(h('fieldset', {}, h('legend', {}, 'Scale (%)'), xyz(['X', 'Y', 'Z'], pct, (axis, val) => { if (val > 0) app.scaleTo(o, axis, val / 100, app.lockRatio); }),
+      h('div', { class: 'mini-btns' }, ...[50, 200].map((p) => h('button', { class: 'btn', onclick: () => app.scaleBy(o, p / 100) }, `×${p / 100}`)),
+        h('button', { class: 'btn', title: 'Back to 100 % on every axis', onclick: () => app.cmdAction?.('Reset scale') }, 'Reset'))));
   }
   parts.push(h('fieldset', {}, h('legend', {}, 'Rotation (degrees)'),
     xyz(['X', 'Y', 'Z'], o.rot, (axis, val) => app.rotateTo(o, axis, val)),
-    h('div', { class: 'rot-btns' }, ...['X', 'Y', 'Z'].flatMap((a, i) => [-90, 90].map((d) => h('button', { class: 'btn', title: `Turn ${d > 0 ? '+' : ''}${d}° around ${a}`, onclick: () => app.rotateBy([o], i, d) }, `${a}${d > 0 ? '+' : '−'}90`))))));
+    h('div', { class: 'rot-btns' }, ...['X', 'Y', 'Z'].flatMap((a, i) => [-90, 90].map((d) => h('button', { class: 'btn', title: `Turn ${d > 0 ? '+' : ''}${d}° around ${a}`, onclick: () => app.rotateBy([o], i, d) }, `${a}${d > 0 ? '+' : '−'}90`)))),
+      h('div', { class: 'mini-btns' }, h('button', { class: 'btn', title: 'Click a face to put it on the plate (F)', onclick: () => app.setTool?.('flatten') }, 'Lay on face'), h('button', { class: 'btn', title: 'Back to 0° on every axis', onclick: () => app.cmdAction?.('Reset rotation') }, 'Reset'))));
 
   if (o.type === 'shape') {
     const def = kindDef(o.kind); const schema = def?.schema ? def.schema(o.params) : def?.params;
@@ -184,6 +190,7 @@ export function renderInspector(app) {
     h('button', { class: 'btn', onclick: () => app.cmd('drop') }, 'Drop to plate'),
     h('button', { class: 'btn', onclick: () => app.mirror(0) }, 'Mirror X'),
     h('button', { class: 'btn', onclick: () => app.mirror(1) }, 'Mirror Y'),
+    h('button', { class: 'btn', onclick: () => app.mirror(2) }, 'Mirror Z'),
     o.type === 'group' ? h('button', { class: 'btn wide', onclick: () => app.cmd('ungroup') }, 'Ungroup') : null,
     h('button', { class: 'btn', onclick: () => app.cmd('split') }, 'Split into parts'),
     h('button', { class: 'btn', onclick: () => app.cmd('bake') }, 'Freeze as mesh'),
@@ -222,11 +229,12 @@ function multiPanel(app, sel) {
       h('button', { class: 'btn', onclick: () => s.edit('make solid', () => sel.forEach((o) => { o.hole = false; })) }, 'All solid'),
       h('button', { class: 'btn', onclick: () => s.edit('make hole', () => sel.forEach((o) => { o.hole = true; })) }, 'All holes')),
     h('fieldset', { class: 'boolset' }, h('legend', {}, 'Boolean'),
-      h('p', { class: 'note', style: { margin: '2px 0 8px' } }, 'Combine into one mesh. ', h('b', {}, sel[0]?.name || 'the first part'), ' is the base.'),
+      h('p', { class: 'note', style: { margin: '2px 0 8px' } }, 'Combine into one mesh, with a preview first (B).'),
       h('div', { class: 'actions', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
-        h('button', { class: 'btn bool', title: 'Merge all into one solid (A ∪ B)', onclick: () => app.cmd('bool:union') }, boolIcon('union'), 'Union'),
-        h('button', { class: 'btn bool', title: 'Cut the others out of the first part (A − B)', onclick: () => app.cmd('bool:subtract') }, boolIcon('subtract'), 'Subtract'),
-        h('button', { class: 'btn bool', title: 'Keep only the shared volume (A ∩ B)', onclick: () => app.cmd('bool:intersect') }, boolIcon('intersect'), 'Intersect'))),
+        h('button', { class: 'btn bool', title: 'Merge all into one solid (A ∪ B)', onclick: () => app.openBoolean('union') }, boolIcon('union'), 'Union'),
+        h('button', { class: 'btn bool', title: 'Cut the others out of the first part (A − B)', onclick: () => app.openBoolean('subtract') }, boolIcon('subtract'), 'Subtract'),
+        h('button', { class: 'btn bool', title: 'Keep only the shared volume (A ∩ B)', onclick: () => app.openBoolean('intersect') }, boolIcon('intersect'), 'Intersect'))),
+    multiTransform(app, sel),
     h('fieldset', {}, h('legend', {}, 'Align'),
       h('div', { class: 'actions', style: { gridTemplateColumns: 'repeat(3,1fr)' } },
         al(0, -1, 'Left'), al(0, 0, 'Centre X'), al(0, 1, 'Right'),
@@ -236,6 +244,17 @@ function multiPanel(app, sel) {
     h('div', { class: 'swatches' }, ...PALETTE.map((c) => h('button', { style: { background: c }, 'aria-label': `Colour ${c}`, onclick: () => s.edit('colour', () => sel.forEach((o) => { o.color = c; o.hole = false; })) }))),
     h('button', { class: 'btn danger', onclick: () => app.cmd('delete') }, 'Delete selected'),
   ];
+}
+
+function multiTransform(app, sel) {
+  const s = app.scene; const box = s.selectionBox(sel); if (!box) return null;
+  const c = box.min.map((v, i) => (v + box.max[i]) / 2); const size = box.max.map((v, i) => v - box.min[i]);
+  const moveTo = (axis, val) => s.edit('move', () => { const d = axis < 2 ? val - c[axis] : val - box.min[2]; sel.forEach((o) => { o.pos = o.pos.map((p, i) => (i === axis ? p + d : p)); }); });
+  return h('fieldset', {}, h('legend', {}, 'Move, turn and scale together'),
+    xyz(['X', 'Y', 'Z'], [c[0], c[1], box.min[2]], moveTo),
+    h('p', { class: 'note', style: { margin: '4px 0' } }, `Together: ${fmt(size[0], 1)} × ${fmt(size[1], 1)} × ${fmt(size[2], 1)} mm`),
+    h('div', { class: 'rot-btns' }, ...['X', 'Y', 'Z'].flatMap((a, i) => [-90, 90].map((d) => h('button', { class: 'btn', title: `Turn all ${d > 0 ? '+' : ''}${d}° around ${a}`, onclick: () => app.rotateGroupBy(sel, i, d) }, `${a}${d > 0 ? '+' : '−'}90`)))),
+    h('div', { class: 'mini-btns' }, ...[50, 200].map((p) => h('button', { class: 'btn', onclick: () => app.scaleGroupBy(sel, p / 100) }, `Scale ×${p / 100}`))));
 }
 
 export function xyz(labels, values, onSet) {
@@ -251,14 +270,12 @@ export function renderSelbar(app) {
   const one = sel.length === 1 ? sel[0] : null;
   bar.replaceChildren(...[
     sel.length > 1 ? b('Group', 'group', 'Merge, cutting holes (Ctrl+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/></svg>') : null,
-    sel.length > 1 ? b('Union', 'bool:union', 'Merge into one mesh (A ∪ B)', BOOL_ICON.union) : null,
-    sel.length > 1 ? b('Subtract', 'bool:subtract', 'Cut the rest out of the first part (A − B)', BOOL_ICON.subtract) : null,
-    sel.length > 1 ? b('Intersect', 'bool:intersect', 'Keep only the shared volume (A ∩ B)', BOOL_ICON.intersect) : null,
+    sel.length > 1 ? b('Boolean', 'boolean', 'Mesh boolean: union, subtract or intersect (B)', BOOL_ICON.intersect) : null,
     one?.type === 'group' ? b('Ungroup', 'ungroup', 'Split the group back into its shapes (Ctrl+Shift+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>') : null,
     b(sel.every((o) => o.hole) ? 'Solid' : 'Hole', 'toggleHole', 'Switch between solid and hole (H)', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.4"/></svg>'),
     h('span', { class: 'sep' }),
     b('Duplicate', 'duplicate', 'Duplicate (Ctrl+D)', '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>'),
-    b('Turn', 'rotZ', 'Turn 90° on the plate (R)', ROT_ICON),
+    b('Turn', 'rotZ', 'Turn 90° on the plate (Shift+R)', ROT_ICON),
     b('Drop', 'drop', 'Drop to plate (D)', '<svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg>'),
     h('span', { class: 'sep' }),
     b('Delete', 'delete', 'Delete (Del)', '<svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>'),

@@ -5,7 +5,7 @@ import { Viewport } from './viewport.js';
 import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row } from './ui.js';
 import { PRINTERS, printerById } from './printers.js';
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
-import { eulerMatrix, transformDir, fmt, eulerFromMatrix } from './math.js';
+import { eulerMatrix, transformDir, fmt, eulerFromMatrix, mul, transformPoint } from './math.js';
 import { hex, PLATES } from './renderer.js';
 
 const STORE_KEY = 'printforge.autosave.v1';
@@ -122,6 +122,33 @@ class App {
       o.pos = [o.pos[0], o.pos[1], o.pos[2] + (wasOnPlate ? -nb.min[2] : box.min[2] - nb.min[2])];
     });
   }
+  /** Set the scale along one world axis to factor f (1 = 100 %), or every axis by the same ratio when uniform. */
+  scaleTo(o, axis, f, uniform) {
+    const map = axisMap(o); const k = map[axis]; const cur = Math.abs(o.scale[k]); if (cur < 1e-9) return;
+    const r = f / cur; this._scaleAbout([o], uniform ? [r, r, r] : [0, 1, 2].map((w) => (w === axis ? r : 1)), 'scale');
+  }
+  scaleBy(o, f) { this._scaleAbout([o], [f, f, f], 'scale'); }
+  scaleGroupBy(list, f) { this._scaleAbout(list, [f, f, f], 'scale'); }
+  /** Scale objects by world-axis factors about the centre of their combined box, keeping the bottom on the plate. */
+  _scaleAbout(list, fx, label) {
+    const s = this.scene; const box = s.selectionBox(list); if (!box) return;
+    const pivot = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, box.min[2]];
+    s.edit(label, () => list.forEach((o) => {
+      const ob = s.worldBox(o); const map = axisMap(o);
+      o.scale = o.scale.map((v, k) => { const w = map.indexOf(k); return v * (w >= 0 ? fx[w] : 1); });
+      const nb = s.worldBox(o); o.pos = o.pos.map((p, k) => p + (pivot[k] + (ob.min[k] - pivot[k]) * fx[k]) - nb.min[k]);
+    }));
+  }
+  /** Turn several objects together about their combined centre. */
+  rotateGroupBy(list, axis, d) {
+    const s = this.scene; const box = s.selectionBox(list); if (!box) return;
+    const c = box.min.map((v, i) => (v + box.max[i]) / 2); const axisVec = [0, 0, 0]; axisVec[axis] = 1; const Rw = eulerMatrix(axisVec.map((a) => a * d));
+    s.edit('rotate', () => {
+      list.forEach((o) => { o.rot = eulerFromMatrix(mul(Rw, eulerMatrix(o.rot))); const r = [o.pos[0] - c[0], o.pos[1] - c[1], o.pos[2] - c[2]]; const p = transformPoint(Rw, r); o.pos = [c[0] + p[0], c[1] + p[1], c[2] + p[2]]; });
+      const nb = s.selectionBox(list); const dz = box.min[2] - nb.min[2]; list.forEach((o) => { o.pos = [o.pos[0], o.pos[1], o.pos[2] + dz]; });
+    });
+  }
+  cmdAction(label) { const a = this.actions.find((x) => x.label === label); if (a) a.run(); }
   /** Change shape parameters, keeping the part's bottom where it was. */
   setParams(o, params, label = 'change shape') {
     const s = this.scene; const before = s.worldBox(o);
@@ -181,6 +208,7 @@ class App {
       case 'selectAll': s.select(s.objects.map((o) => o.id)); break;
       case 'split': if (need()) this.split(ids); break;
       case 'bake': if (need()) this.bake(ids); break;
+      case 'boolean': this.openBoolean?.(); break;
       case 'bool:union': if (need()) this.boolean('union'); break;
       case 'bool:subtract': if (need()) this.boolean('subtract'); break;
       case 'bool:intersect': if (need()) this.boolean('intersect'); break;
@@ -382,17 +410,21 @@ class App {
       h('div', { class: 'seg' }, ...[0, 0.1, 0.5, 1, 5, 10].map((v) => h('button', { 'aria-pressed': String(st.snap === v), onclick: () => { st.snap = v; this.view.r.gridStep = v >= 5 ? v : 10; this._changed(); } }, v ? String(v) : 'Off'))),
       h('p', { class: 'note' }, 'Hold Ctrl while dragging to move freely, Shift to keep to one axis.')));
     out.push(h('fieldset', {}, h('legend', {}, 'How it works'),
-      h('p', { class: 'note' }, 'Add shapes from the library and drag them around the plate. The cone above a selection lifts it. Mark shapes as holes, select a hole and a solid together and Group to cut. Switch to Prepare to print for checks, orientation and estimates.')));
+      h('p', { class: 'note' }, 'Add shapes from the library and drag them around the plate. Use the tools on the left of the view to move (M), rotate (R), scale (S) or lay a face flat (F). Mark shapes as holes, select a hole and a solid together and Group to cut. Switch to Prepare to print for checks, orientation and estimates.')));
     return out;
   }
   showHelp() {
     const keys = [['Orbit', 'Left-drag empty space / right-drag'], ['Pan', 'Middle-drag / Shift+right-drag'], ['Zoom', 'Scroll / pinch'], ['Select more', 'Shift+click'], ['Duplicate while dragging', 'Alt+drag'], ['Free move (no snap)', 'Ctrl+drag'],
-      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90°', 'R'], ['Drop to plate', 'D'], ['Cycle move / rotate / scale', 'G'],
-      ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Fit view', 'F'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
-      ['Search every tool', 'Ctrl+K'], ['Quick box / cylinder / sphere', 'B / C / S'], ['Measure', 'M'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
+      ['Move tool', 'M'], ['Rotate tool', 'R'], ['Scale tool', 'S'], ['Lay on face', 'F'], ['Cut in two', 'C'], ['Mesh boolean', 'B'], ['Measure', 'U'], ['Fit view', 'Z'],
+      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90° on the plate', 'Shift+R'], ['Drop to plate', 'D'],
+      ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
+      ['Search every tool', 'Ctrl+K'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
     this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, b)))),
-      h('p', { class: 'note', style: { marginTop: '14px' } }, h('b', {}, 'Move, rotate, scale: '), 'select a part and drag the coloured arrows (move), balls (rotate) or cubes (scale) on the gizmo. Switch the tool top-left. Shift snaps rotation to 15° and scales every side at once; Ctrl drags without snapping.'),
-      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Boolean: '), 'select two or more parts, then Union (merge), Subtract (cut the rest out of the first) or Intersect (keep the shared volume). The result is one mesh. Grouping instead keeps the shapes editable.'),
+      h('p', { class: 'note', style: { marginTop: '14px' } }, h('b', {}, 'Move (M): '), 'drag a coloured arrow to move along that axis, or drag the part to slide it on the plate. Snaps to the grid; Shift snaps to 10 mm; Ctrl moves freely.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Rotate (R): '), 'drag a coloured ring to turn around X, Y or Z. Turns in whole degrees; Shift snaps to 15°.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Scale (S): '), 'drag a coloured cube to stretch that direction, or the white corner cube to scale evenly. Ctrl stretches one side only; Shift snaps to whole millimetres. Exact numbers go in the panel on the right.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Lay on face (F): '), 'click any flat face to put it down on the plate.'),
+      h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Mesh boolean (B): '), 'select parts, pick Union, Subtract or Intersect, choose which parts to keep and which cut away, check the preview, then Apply. Grouping holes instead keeps the shapes editable.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'));
   }
   modal(title, ...body) {
@@ -416,9 +448,6 @@ class App {
     document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown')) this.closeMenus(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
     document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => { const r = this.view.setView(b.dataset.view); if (b.dataset.view === 'proj') b.querySelector('span').textContent = r ? 'Persp' : 'Ortho'; }));
-    const toolBtns = document.querySelectorAll('#toolbar [data-tool]');
-    toolBtns.forEach((b) => b.addEventListener('click', () => this.view.setTool(b.dataset.tool)));
-    this.on('tool', (t) => toolBtns.forEach((b) => { const on = b.dataset.tool === t; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }));
     document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode)));
     document.querySelectorAll('[data-drawer]').forEach((b) => b.addEventListener('click', () => { const app = document.getElementById('app'); const c = `show-${b.dataset.drawer}`; const on = !app.classList.contains(c); app.classList.remove('show-left', 'show-right'); if (on) app.classList.add(c); }));
     const dn = document.getElementById('docName');
@@ -457,16 +486,20 @@ class App {
     if (mod) return;
     const sel = s.selected();
     if (k === 'delete' || k === 'backspace') return go(() => this.cmd('delete'));
-    if (k === 'escape') return go(() => { if (this.view.measure) this.view.setMeasure(false); else s.clearSelection(); });
-    if (k === 'm') return go(() => this.view.setMeasure(!this.view.measure));
+    if (k === 'escape') return go(() => { if (this.view.measure) this.view.setMeasure(false); else if (this.boolTool) this.closeBoolean(); else if (this.view.tool === 'flatten') this.setTool('move'); else s.clearSelection(); });
+    // Tool keys follow Bambu Studio: M move, R rotate, S scale, F lay on face, C cut, B boolean; U measure, Z fit.
+    if (k === 'm') return go(() => this.setTool('move'));
+    if (k === 'r' && e.shiftKey) return go(() => this.cmd('rotZ'));
+    if (k === 'r') return go(() => this.setTool('rotate'));
+    if (k === 's') return go(() => this.setTool('scale'));
+    if (k === 'f') return go(() => this.setTool('flatten'));
+    if (k === 'b') return go(() => this.openBoolean());
+    if (k === 'c') return go(() => this.openCut());
+    if (k === 'u') return go(() => this.view.setMeasure(!this.view.measure));
+    if (k === 'z') return go(() => this.view.fit());
     if (k === 'h') return go(() => this.cmd('toggleHole'));
     if (k === 'g') return go(() => { const order = ['move', 'rotate', 'scale']; this.view.setTool(order[(order.indexOf(this.view.tool) + 1) % 3]); this.toast(`${this.view.tool[0].toUpperCase()}${this.view.tool.slice(1)} tool`); });
-    if (k === 'r') return go(() => this.cmd('rotZ'));
     if (k === 'd') return go(() => this.cmd('drop'));
-    if (k === 'f') return go(() => this.view.fit());
-    if (k === 'b') return go(() => this.addShape('box'));
-    if (k === 'c') return go(() => this.addShape('cylinder'));
-    if (k === 's') return go(() => this.addShape('sphere'));
     if (k === '?') return go(() => this.showHelp());
     const views = { 7: 'top', 1: 'front', 3: 'right', 0: 'iso' }; if (views[k]) return go(() => this.view.setView(views[k]));
     if (k === '5') return go(() => { const r = this.view.setView('proj'); document.getElementById('projBtn').querySelector('span').textContent = r ? 'Persp' : 'Ortho'; });
@@ -489,7 +522,7 @@ void transformDir; void K;
 export const app = new App();
 window.printforge = app;
 // Feature modules register themselves before start().
-const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js')]);
+const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js'), import('./tools.js')]);
 for (const m of mods) if (m.status === 'fulfilled' && m.value.install) app.plugins.push(m.value.install);
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !navigator.webdriver) navigator.serviceWorker.register('sw.js').catch(() => {});
 app.start().catch((e) => { document.getElementById('loading').innerHTML = `<p style="max-width:420px;text-align:center">PrintForge could not start: ${e.message}. Use a current Chrome, Edge, Firefox or Safari, and open the page through a web server (GitHub Pages works).</p>`; console.error(e); });

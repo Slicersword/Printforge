@@ -32,11 +32,14 @@ Any static server works (`npx serve`, nginx, Caddy, IIS).
 - **Shapes**: box (with rounded edges), cylinder (with top chamfer), sphere, half sphere, cone, tube, torus, wedge, pyramid, polygon, star, heart, slot, and **text** in any installed font.
 - **Holes and hardware**: screw holes M2–M8 with counterbore or countersink, nut traps, heat-set insert holes, teardrop holes that print without supports, and vent grids (round, hex, square, slot).
 - **Solids and holes**: turn any shape into a hole, select it with a solid, and **Group** to cut. Ungroup to edit again.
-- **Transform gizmo**: select a part and drag the coloured handles in the view — red X, green Y, blue Z. Switch between **Move** (arrows), **Rotate** (balls) and **Scale** (cubes) with the toolbar at the top-left or the `G` key. Shift snaps rotation to 15° and scales every side at once; Ctrl drags without snapping. You can still drag on the plate, type exact numbers, or use quick 90° turns. Number fields accept sums such as `40/2+3` or `1.5*inch`.
-- **Boolean operations**: select two or more parts and choose **Union** (merge), **Subtract** (cut the rest out of the first part) or **Intersect** (keep only the shared volume). The result is one watertight mesh, ready to print or export. Grouping instead keeps the shapes editable.
-- **Align and space evenly**, mirror, duplicate (Alt-drag), copy and paste, undo and redo.
-- **Cut in two** along X, Y or height, with a live preview of the cut plane.
-- **Split into parts** (separate disconnected pieces) and **Freeze as mesh**.
+- **Move, Rotate, Scale and Lay on face** (as in Bambu Studio): pick a tool from the bar at the top-left of the view or press `M`, `R`, `S` or `F`.
+  - **Move**: drag a coloured arrow (red X, green Y, blue Z), or drag the part across the plate. Snaps to the grid; Shift snaps to 10 mm; Ctrl moves freely.
+  - **Rotate**: drag a coloured ring to turn around that axis, about the centre of the selection. Whole degrees; Shift snaps to 15°. Parts on the plate stay on the plate.
+  - **Scale**: drag a coloured cube to stretch that direction (both sides), Ctrl+drag to stretch one side only, or drag the white corner cube to scale evenly. Shift snaps to whole millimetres.
+  - **Lay on face**: hover a flat face (it lights up orange) and click to put it on the plate.
+  - **Exact numbers** in the panel on the right: position, size in mm, scale in %, rotation in degrees, Keep proportions, ×0.5 / ×2, quick 90° turns, Reset rotation and scale, Mirror X/Y/Z. With several parts selected you can move, turn and scale them together. Number fields accept sums such as `40/2+3` or `1.5*inch`.
+- **Mesh boolean** (`B`), modelled on Bambu Studio's Mesh Boolean tool and PaliCAD's union / subtract / intersect: select parts (shapes or imported STL/OBJ/3MF meshes), pick **Union**, **Subtract** or **Intersect**, mark each part **Keep** or **Cut away**, and check the live preview with its volume and piece count before you **Apply**. You can keep the originals (hidden). Grouping holes instead keeps the shapes editable.
+- **Cut in two** (`C`) along X, Y or Z.
 - **Measure** the distance between any two points.
 
 ### Generators
@@ -111,16 +114,16 @@ Tolerance test, overhang test, bridge test and retraction test, each with editab
 | Action | Keys |
 |---|---|
 | Orbit / pan / zoom | left-drag empty space or right-drag / middle-drag / scroll |
-| Add box, cylinder, sphere | B, C, S |
+| Move / Rotate / Scale / Lay on face | M / R / S / F |
+| Cut / Mesh boolean / Measure | C / B / U |
 | Hole ↔ solid | H |
 | Group / ungroup | Ctrl G / Ctrl Shift G |
 | Duplicate | Ctrl D, or Alt-drag |
-| Turn 90° / drop to plate | R / D |
+| Turn 90° / drop to plate | Shift R / D |
 | Nudge / raise | arrows / Page Up, Page Down (Shift ×10) |
 | Undo / redo | Ctrl Z / Ctrl Shift Z |
 | Search every tool | Ctrl K |
-| Measure | M |
-| Views | 7 top, 1 front, 3 right, 0 iso, 5 perspective/orthographic, F fit |
+| Views | 7 top, 1 front, 3 right, 0 iso, 5 perspective/orthographic, Z fit |
 | Save / open / export STL | Ctrl S / Ctrl O / Ctrl E |
 
 ## Project layout
@@ -145,6 +148,7 @@ js/palette.js           Ctrl K command search
 js/makers.js            stencil, cookie cutter, badge, lithophane, relief
 js/ai.js                AI platforms (Gemini, Claude, OpenAI-compatible, Zoo, Tripo3D, TRELLIS)
 js/repair.js            rebuilds leaky meshes as watertight solids
+js/tools.js             tool bar, mesh boolean tool, lay on face
 relay/worker.js         optional Cloudflare relay for Zoo and Tripo3D
 js/io.js                STL, OBJ, 3MF and ZIP read/write
 js/printers.js          printer and material presets

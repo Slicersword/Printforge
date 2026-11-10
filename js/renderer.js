@@ -127,6 +127,8 @@ export class Renderer {
     this.clipZ = 1e9; this.overhang = 0; this.gridStep = 10;
   }
   _buf(data, target) { const gl = this.gl; const b = gl.createBuffer(); gl.bindBuffer(target || gl.ARRAY_BUFFER, b); gl.bufferData(target || gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); return b; }
+  /** Free the GPU buffers of render data that won't be drawn again (previews, highlights). */
+  release(rd) { const b = rd && this.buffers.get(rd); if (!b) return; const gl = this.gl; [b.pos, b.nor, b.edges].forEach((x) => x && gl.deleteBuffer(x)); this.buffers.delete(rd); }
   buffersFor(rd) {
     let b = this.buffers.get(rd);
     if (!b) { b = { pos: this._buf(rd.pos), nor: this._buf(rd.nor), count: rd.pos.length / 3, edges: rd.edges.length ? this._buf(rd.edges) : null, ecount: rd.edges.length / 3 }; this.buffersFor.lru = 0; this.buffers.set(rd, b); }
@@ -188,7 +190,8 @@ export class Renderer {
     }
     const I = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
     gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9);
-    for (const ln of [this._bedLines(), ...(extras.lines || [])]) {
+    const bedLines = this._bedLines();
+    for (const ln of [bedLines, ...(extras.lines || [])]) {
       if (!ln || !ln.data.length) continue;
       if (!ln.buf || ln.bufData !== ln.data) { ln.buf = this._buf(ln.data); ln.bufData = ln.data; }
       gl.uniform4fv(L.u.uColor, ln.color);
@@ -196,6 +199,8 @@ export class Renderer {
       if (ln.noDepth) gl.disable(gl.DEPTH_TEST);
       gl.drawArrays(gl.LINES, 0, ln.data.length / 3);
       gl.enable(gl.DEPTH_TEST);
+      // per-frame overlay lines get a fresh buffer every frame, so free it straight away
+      if (ln !== bedLines && ln.buf) { gl.deleteBuffer(ln.buf); ln.buf = null; }
     }
     // translucent: holes and ghosts, sorted back to front
     gl.useProgram(S.p); gl.depthMask(false);

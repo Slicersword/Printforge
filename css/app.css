@@ -404,3 +404,43 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; }
 .ai-image { display: flex; flex-direction: column; gap: 8px; }
 .ai-img { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid var(--line); object-fit: contain; background: var(--bg); }
 @media (max-width: 900px) { .modal .ai-wrap { grid-template-columns: 1fr; } .ai-platforms { flex-direction: row; overflow-x: auto; } .ai-plat { min-width: 170px; } .ai-key { grid-template-columns: 1fr; } }
+
+/* ---- transform tool bar (Move, Rotate, Scale, Lay on face, Cut, Boolean, Measure) */
+.gizmobar { position: absolute; top: 10px; left: 10px; z-index: 3; display: flex; flex-direction: column; gap: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 3px; box-shadow: var(--shadow); }
+.gizmobar[hidden] { display: none; }
+.gizmobar button { border: 0; background: none; display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px; padding: 6px 7px 6px 7px; border-radius: 6px; color: var(--ink); font-weight: 500; font-size: 13px; text-align: left; min-width: 132px; }
+.gizmobar svg { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.gizmobar kbd { font: 500 11px var(--font-num); color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; min-width: 16px; text-align: center; }
+.gizmobar button:hover { background: var(--panel-2); }
+.gizmobar button.on { background: var(--accent); color: var(--accent-ink); }
+.gizmobar button.on kbd { color: inherit; border-color: color-mix(in srgb, var(--accent-ink) 40%, transparent); }
+.gizmobar button.dim:not(.on) { color: var(--muted); }
+.gizmobar .sep { height: 1px; background: var(--line); margin: 3px 4px; }
+@media (max-width: 1280px) { .gizmobar button { grid-template-columns: 18px auto; min-width: 0; } .gizmobar button span { display: none; } }
+@media (max-width: 900px) { .gizmobar { top: auto; bottom: 84px; } .gizmobar kbd { display: none; } .gizmobar button { grid-template-columns: 18px; padding: 7px; } }
+.selbar { max-width: calc(100% - 260px); }
+
+/* ---- inspector extras */
+.mini-btns { display: flex; gap: 4px; margin-top: 6px; }
+.mini-btns .btn { flex: 1; padding: 4px 6px; font-size: 12.5px; }
+.tool-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tool-head h3 { margin: 0; font-size: 15px; }
+.seg.ops button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 6px; font-size: 12.5px; }
+.seg.ops svg { width: 22px; height: 22px; stroke: currentColor; stroke-width: 1.4; fill: none; }
+.grp-label { margin: 4px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.grp-label.cut { color: var(--hole); }
+.bool-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.bool-row { display: flex; align-items: center; gap: 7px; padding: 4px 4px 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.bool-row .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; border: 1px solid rgba(0,0,0,.15); }
+.bool-row .sw.hole { background: repeating-linear-gradient(45deg, var(--hole) 0 2px, transparent 2px 4px) !important; }
+.bool-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.bool-row .seg.mini { flex: none; }
+.bool-row .seg.mini button { padding: 2px 7px; font-size: 12px; }
+.bool-row .x { border: 0; background: none; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 4px; }
+.bool-row .x:hover { color: var(--warn); }
+.check { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.note.result { color: var(--ink); }
+.gizmobar kbd { background: transparent; box-shadow: none; }
+/* the selection bar moves to the bottom so it never covers the tool bar */
+.selbar { top: auto; bottom: 12px; max-width: calc(100% - 200px); }
+@media (max-width: 900px) { .selbar { bottom: 84px; left: auto; right: 10px; transform: none; max-width: calc(100% - 70px); } }
