@@ -1,0 +1,1 @@
+{ "name": "PrintForge", "short_name": "PrintForge", "description": "Design parts for 3D printing in your browser.", "start_url": "./", "display": "standalone", "background_color": "#E6EBEF", "theme_color": "#13858C", "icons": [{ "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }

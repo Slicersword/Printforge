@@ -1,0 +1,132 @@
+# PrintForge
+
+Design parts for 3D printing in your browser. Put shapes on the plate, cut holes, draw sketches, generate enclosures, gears and threads, write parametric code models, then check and orient everything for printing and export a 3MF for your slicer.
+
+No account, no install, no build step. It is plain HTML, CSS and JavaScript plus the Manifold geometry engine (WebAssembly), so it runs from GitHub Pages or any static web host, and keeps working offline once loaded.
+
+**Live app:** `https://<your-user>.github.io/<this-repo>/` (after the one-time setup below)
+
+## Put it online with GitHub Pages
+
+1. Create a new repository on GitHub and upload everything in this folder to it, keeping the folder structure (the `.github` folder too).
+2. In the repository, open **Settings → Pages**, and under **Build and deployment → Source** choose **GitHub Actions**.
+3. Push to `main` (or run the "Deploy to GitHub Pages" workflow from the **Actions** tab). After a minute the app is at `https://<your-user>.github.io/<repo>/`.
+
+Prefer not to use Actions? Choose **Deploy from a branch → main → / (root)** instead. The `.nojekyll` file is already there so every file is served as-is.
+
+### Run it on your own computer
+
+The app loads JavaScript modules and WebAssembly, so it must be served over HTTP. Opening `index.html` straight from disk won't work.
+
+```sh
+cd printforge
+python3 -m http.server 8000
+# then open http://localhost:8000
+```
+
+Any static server works (`npx serve`, nginx, Caddy, IIS).
+
+## What it does
+
+### Design
+- **Shapes**: box (with rounded edges), cylinder (with top chamfer), sphere, half sphere, cone, tube, torus, wedge, pyramid, polygon, star, heart, slot, and **text** in any installed font.
+- **Holes and hardware**: screw holes M2–M8 with counterbore or countersink, nut traps, heat-set insert holes, teardrop holes that print without supports, and vent grids (round, hex, square, slot).
+- **Solids and holes**: turn any shape into a hole, select it with a solid, and **Group** to cut. Ungroup to edit again.
+- **Move, raise, rotate, resize** by dragging on the plate (snapping to 0.1–10 mm), the lift cone, quick 90° turns, or by typing numbers. Number fields accept sums such as `40/2+3` or `1.5*inch`.
+- **Align and space evenly**, mirror, duplicate (Alt-drag), copy and paste, undo and redo.
+- **Cut in two** along X, Y or height, with a live preview of the cut plane.
+- **Split into parts** (separate disconnected pieces) and **Freeze as mesh**.
+- **Measure** the distance between any two points.
+
+### Generators
+Electronics enclosure (lip or screw lid, PCB standoffs, USB-C/Micro-USB/DC-jack cut-outs, vents), spur gear (straight, helical or herringbone involute teeth), Gridfinity-style bin, bolt and nut with real helical threads, vase for spiral/vase mode, knob with D-shaft, cable clip, and name tag/keyring. Every value stays editable afterwards.
+
+### Sketch
+Draw rectangles, circles, polygons, slots and outlines on a grid, typing exact sizes. Shapes inside other shapes become holes. Repeat a shape in a grid or a circle, mirror it, then **extrude** (with taper and twist) or **revolve**. Double-click a sketch on the plate to edit it again. **Trace an image or logo** (PNG, JPG, SVG) to turn it into a solid.
+
+### Code
+Write a model in JavaScript. Values declared with `params()` become controls in the panel:
+
+```js
+const p = params({ width: [40, 10, 200], holes: [4, 1, 12], rounded: true });
+const plate = box(p.width, 30, 4, p.rounded ? 3 : 0);
+const holes = repeat(p.holes, (i) => cyl(3.4, 10).translate([-p.width / 2 + 6 + i * 8, 0, -1]));
+return subtract(plate, holes);
+```
+
+Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly`, `extrude`, `revolve`, `union`, `subtract`, `intersect`, `hull`, `repeat`, and the whole Manifold API (`Manifold`, `CrossSection`). `sin`, `cos` and `tan` take degrees. Examples are included (wall hook, phone stand, honeycomb coaster, planter, gear pair).
+
+### Prepare to print
+- 28 printer presets (Bambu Lab, Prusa, Creality, Elegoo, Anycubic, Qidi, Voron, Snapmaker, Flashforge) plus a custom size. The plate in the view is drawn at the real size.
+- **Print check**: fits the build volume, sits on the plate, first-layer contact, overhang area, walls thinner than one line, tall and narrow parts, holes left ungrouped.
+- **Lay flat** (largest flat face down), **Auto-orient** (fewest overhangs), **Auto-arrange** (packs the plate).
+- **Overhang view** in red, with an adjustable angle, and a **layer slider** that cuts the model at any layer.
+- **Estimates**: weight, filament length, time and cost for PLA, PETG, ABS, ASA, TPU, nylon or PC, with your layer height, walls and infill.
+
+### Files
+- Export **3MF** (separate parts with colours; opens in Bambu Studio, OrcaSlicer, PrusaSlicer, Cura), **STL**, **OBJ + MTL**, the selection only, or every part as its own STL in a zip.
+- Import **STL** (binary or text), **OBJ** and **3MF**. Imported meshes can be cut, grouped with holes and so on.
+- Save and open projects as `.pforge` files. Your current design is also autosaved in the browser.
+
+## Keyboard shortcuts
+
+| Action | Keys |
+|---|---|
+| Orbit / pan / zoom | left-drag empty space or right-drag / middle-drag / scroll |
+| Add box, cylinder, sphere | B, C, S |
+| Hole ↔ solid | H |
+| Group / ungroup | Ctrl G / Ctrl Shift G |
+| Duplicate | Ctrl D, or Alt-drag |
+| Turn 90° / drop to plate | R / D |
+| Nudge / raise | arrows / Page Up, Page Down (Shift ×10) |
+| Undo / redo | Ctrl Z / Ctrl Shift Z |
+| Measure | M |
+| Views | 7 top, 1 front, 3 right, 0 iso, 5 perspective/orthographic, F fit |
+| Save / open / export STL | Ctrl S / Ctrl O / Ctrl E |
+
+## Project layout
+
+```
+index.html              page shell
+css/app.css             styles (light and dark)
+js/main.js              app controller, commands, shortcuts, files
+js/kernel.js            Manifold wrapper, geometry cache, render meshes
+js/scene.js             document model, groups, undo history, project files
+js/renderer.js          WebGL2 renderer (plate, meshes, holes, overhangs, layer cut)
+js/viewport.js          picking, dragging, camera, measuring
+js/ui.js                panels and inspector
+js/shapes.js            shape library and print hardware
+js/generators.js        enclosure, gear, Gridfinity, threads, vase, knob, clip, tag
+js/sketch.js            sketch editor, extrude and revolve
+js/textshape.js         text and image tracing
+js/script.js            code models
+js/printprep.js         print checks, orientation, arrangement, estimates
+js/io.js                STL, OBJ, 3MF and ZIP read/write
+js/printers.js          printer and material presets
+vendor/                 Manifold (Apache-2.0)
+sw.js                   offline cache
+```
+
+To add a shape, call `defineShape(kind, { label, category, params, build })` in `js/shapes.js`; the library button, inspector controls, undo and export come for free. `build` receives the parameter values and the Manifold API and returns a solid.
+
+## Where the ideas come from
+
+PrintForge is new code. It brings together workflows from these open-source projects:
+
+- **layerling** and **Tinkercad**-style editing: shapes and holes, grouping, hole patterns, printer presets, overhang and print estimates
+- **Easy Enclosure**: the parametric electronics enclosure
+- **PaliCAD**, **Extrudo**, **QymCAD** and **SolidCraft**: sketch → extrude/revolve modelling with exact dimensions; the mounting-plate example follows the PaliCAD getting-started guide
+- **Forgent3D**: models written as code with editable parameters
+- **Bambu Studio**: plate, auto-arrange, lay flat, auto-orient, overhang view and layer preview
+
+No source code was copied from those projects; several of them are AGPL or GPL licensed. Printer build volumes are public manufacturer specifications.
+
+## Limits
+
+- Geometry is mesh-based (Manifold), not a B-rep kernel, so STEP export and true edge fillets aren't available. Rounded boxes, chamfered cylinders and the generators cover common cases.
+- Estimates are approximate; your slicer gives the real numbers.
+- Text uses the fonts on the device you're using. Use **Freeze as mesh** to keep text identical across computers.
+
+## Licence
+
+MIT, see `LICENSE`. The Manifold library in `vendor/` is Apache-2.0, see `vendor/LICENSE-manifold.txt`.

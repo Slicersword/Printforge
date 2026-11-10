@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PrintForge</title>
+<meta name="description" content="Design parts for 3D printing in your browser: shapes and holes, sketches, parametric generators, code models and print checks. Exports STL, 3MF and OBJ.">
+<meta name="theme-color" content="#13858C">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app" class="app">
+  <header class="topbar">
+    <div class="brand" title="PrintForge">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="21" width="26" height="6" rx="1.5" class="b-plate"/><path d="M9 21V13l7-5 7 5v8" class="b-part"/><path d="M13 21v-5h6v5" class="b-hole"/></svg>
+      <span class="brand-name">PrintForge</span>
+    </div>
+    <input id="docName" class="doc-name" value="Untitled design" aria-label="Design name" spellcheck="false">
+    <nav class="menu" aria-label="File">
+      <button data-cmd="new" title="New design">New</button>
+      <button data-cmd="open" title="Open a .pforge project (Ctrl+O)">Open</button>
+      <button data-cmd="save" title="Save the project file (Ctrl+S)">Save</button>
+      <button data-cmd="import" title="Import STL, OBJ or 3MF">Import</button>
+      <div class="dropdown">
+        <button data-cmd="exportMenu" class="primary" aria-haspopup="true">Export</button>
+        <div class="dropdown-menu" id="exportMenu" hidden>
+          <button data-cmd="export:stl">STL <small>one mesh, every slicer</small></button>
+          <button data-cmd="export:3mf">3MF <small>separate parts with colours</small></button>
+          <button data-cmd="export:obj">OBJ <small>with .mtl colours</small></button>
+          <hr>
+          <button data-cmd="export:sel-stl">Selection as STL</button>
+          <button data-cmd="export:parts">Each part as its own STL (zip)</button>
+        </div>
+      </div>
+    </nav>
+    <div class="history">
+      <button data-cmd="undo" title="Undo (Ctrl+Z)" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button data-cmd="redo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    </div>
+    <div class="modes" role="tablist" aria-label="Workspace">
+      <button role="tab" data-mode="design" aria-selected="true">Design</button>
+      <button role="tab" data-mode="prepare" aria-selected="false"><span class="long">Prepare to print</span><span class="short">Prepare</span></button>
+    </div>
+    <div class="top-right">
+      <button data-cmd="theme" title="Light or dark" aria-label="Toggle theme"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg></button>
+      <button data-cmd="help" title="Shortcuts and help (?)" aria-label="Help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg></button>
+    </div>
+  </header>
+
+  <aside class="left panel" id="left">
+    <div class="tabs" role="tablist" id="leftTabs"></div>
+    <div class="tab-body" id="leftBody"></div>
+    <section class="outline">
+      <div class="section-head"><h2>Objects</h2><span id="objCount" class="count"></span></div>
+      <ul id="objectList" class="object-list" aria-label="Objects in the design"></ul>
+    </section>
+  </aside>
+
+  <main class="stage" id="stage">
+    <canvas id="view" tabindex="0" aria-label="3D view. Drag to orbit, scroll to zoom."></canvas>
+    <div class="viewnav" aria-label="Camera">
+      <button data-view="home" title="Fit everything (F)">Fit</button>
+      <button data-view="top" title="Top (7)">Top</button>
+      <button data-view="front" title="Front (1)">Front</button>
+      <button data-view="right" title="Right (3)">Right</button>
+      <button data-view="iso" title="Isometric (0)">Iso</button>
+      <button data-view="proj" title="Perspective or orthographic (5)" id="projBtn">Persp</button>
+      <button data-view="measure" title="Measure between two points (M)" id="measureBtn">Measure</button>
+    </div>
+    <div class="selbar" id="selbar" hidden></div>
+    <div class="layerbar" id="layerbar" hidden>
+      <label for="layerSlider">Layer</label>
+      <input type="range" id="layerSlider" min="0" max="100" value="100">
+      <output id="layerOut">all</output>
+    </div>
+    <div class="empty-hint" id="emptyHint">
+      <p class="eh-title">Start with a shape</p>
+      <p>Pick one from the library, or press <kbd>B</kbd> for a box. Drag it on the plate, turn it into a hole, and group to cut.</p>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <aside class="right panel" id="right">
+    <div id="inspector"></div>
+  </aside>
+
+  <footer class="status" id="status"></footer>
+
+  <button class="drawer-btn left-btn" data-drawer="left" aria-label="Library">Library</button>
+  <button class="drawer-btn right-btn" data-drawer="right" aria-label="Properties">Properties</button>
+</div>
+
+<dialog id="modal" class="modal"></dialog>
+<input type="file" id="fileOpen" accept=".pforge,.json" hidden>
+<input type="file" id="fileImport" accept=".stl,.obj,.3mf" multiple hidden>
+<div id="loading" class="loading"><div class="spinner"></div><p>Loading the geometry engine…</p></div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
