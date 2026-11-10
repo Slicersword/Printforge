@@ -260,6 +260,9 @@ const TEMPLATES = [
 ];
 export function install(app) {
   app.editors = app.editors || {}; app.editors.sketch = (o) => openSketch(app, o);
+  app.addAction({ label: 'New sketch', group: 'Sketch', run: () => { app.setMode('design'); openSketch(app, null); } });
+  app.addAction({ label: 'Trace an image or logo', group: 'Sketch', run: () => { app.setMode('design'); app.openTraceDialog?.(); } });
+  for (const t of TEMPLATES) app.addAction({ label: t.name, group: 'Sketch example', run: () => { app.setMode('design'); app.addShape('sketch', JSON.parse(JSON.stringify(t.p)), { name: t.name }); } });
   app.library.addTab('sketch', 'Sketch', (el) => {
     el.append(h('button', { class: 'btn primary', style: { width: '100%', marginBottom: '6px' }, onclick: () => openSketch(app, null) }, 'New sketch'));
     el.append(h('button', { class: 'btn', style: { width: '100%' }, onclick: () => app.openTraceDialog?.() }, 'Trace an image or logo…'));

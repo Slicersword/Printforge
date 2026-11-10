@@ -41,6 +41,18 @@ void main(){ vec4 w=uModel*vec4(aPos,1.0); vW=w.xyz; gl_Position=uVP*w; gl_Posit
 const LINE_FS = `#version 300 es
 precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; out vec4 o;
 void main(){ if (vW.z > uClip + 0.01) discard; o=uColor; }`;
+const CLINE_VS = `#version 300 es
+in vec3 aPos; in vec3 aCol; uniform mat4 uVP; out vec3 vC;
+void main(){ vC=aCol; gl_Position=uVP*vec4(aPos,1.0); }`;
+const CLINE_FS = `#version 300 es
+precision highp float; in vec3 vC; uniform float uAlpha; out vec4 o;
+void main(){ o=vec4(vC,uAlpha); }`;
+// Build plates: [base, minor grid, major grid] for light and dark themes.
+export const PLATES = {
+  textured: { label: 'Textured PEI', light: [[0.79, 0.67, 0.43], [0.62, 0.5, 0.3], [0.45, 0.35, 0.2]], dark: [[0.36, 0.3, 0.2], [0.25, 0.21, 0.14], [0.16, 0.13, 0.09]] },
+  smooth: { label: 'Smooth black', light: [[0.2, 0.21, 0.23], [0.3, 0.31, 0.34], [0.42, 0.43, 0.47]], dark: [[0.13, 0.14, 0.15], [0.2, 0.21, 0.23], [0.3, 0.31, 0.34]] },
+  cool: { label: 'Cool plate', light: [[0.78, 0.8, 0.82], [0.66, 0.68, 0.71], [0.52, 0.54, 0.58]], dark: [[0.32, 0.34, 0.37], [0.25, 0.27, 0.3], [0.18, 0.2, 0.22]] },
+};
 const PLATE_VS = `#version 300 es
 in vec2 aPos; uniform mat4 uVP; uniform vec2 uSize; out vec2 vP;
 void main(){ vP = aPos*uSize; gl_Position = uVP*vec4(vP, -0.02, 1.0); }`;
@@ -105,10 +117,11 @@ export class Renderer {
     this.mesh = compile(gl, MESH_VS, MESH_FS);
     this.line = compile(gl, LINE_VS, LINE_FS);
     this.plate = compile(gl, PLATE_VS, PLATE_FS);
+    this.cline = compile(gl, CLINE_VS, CLINE_FS); this.cline.a.aCol = gl.getAttribLocation(this.cline.p, 'aCol');
     this.cam = new Camera();
     this.buffers = new WeakMap(); // render data -> gl buffers
     this.quad = this._buf(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]));
-    this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66] };
+    this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66], plate: 'textured' };
     this.bed = { w: 256, d: 256, h: 250, round: false, origin: 'centre' };
     this.clipZ = 1e9; this.overhang = 0; this.gridStep = 10;
   }
@@ -137,9 +150,8 @@ export class Renderer {
     gl.uniformMatrix4fv(P.u.uVP, false, vp);
     gl.uniform2f(P.u.uSize, bed.round ? bed.w / 2 : bed.w / 2, bed.round ? bed.w / 2 : bed.d / 2);
     gl.uniform1f(P.u.uRound, bed.round ? 1 : 0); gl.uniform1f(P.u.uStep, this.gridStep);
-    gl.uniform3fv(P.u.uPlate, t.dark ? [0.36, 0.3, 0.2] : [0.79, 0.67, 0.43]);
-    gl.uniform3fv(P.u.uMinor, t.dark ? [0.25, 0.21, 0.14] : [0.62, 0.5, 0.3]);
-    gl.uniform3fv(P.u.uMajor, t.dark ? [0.16, 0.13, 0.09] : [0.45, 0.35, 0.2]);
+    const pc = (PLATES[t.plate] || PLATES.textured)[t.dark ? 'dark' : 'light'];
+    gl.uniform3fv(P.u.uPlate, pc[0]); gl.uniform3fv(P.u.uMinor, pc[1]); gl.uniform3fv(P.u.uMajor, pc[2]);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
 
@@ -160,6 +172,7 @@ export class Renderer {
     const opaque = items.filter((i) => !i.hole && !(i.alpha < 1)), trans = items.filter((i) => i.hole || i.alpha < 1);
     for (const it of opaque) drawMesh(it, false);
     gl.disable(gl.POLYGON_OFFSET_FILL);
+    if (extras.gcode) this._drawGcode(extras.gcode, vp);
 
     // lines: edges, bed volume, extras
     const L = this.line; gl.useProgram(L.p); gl.uniformMatrix4fv(L.u.uVP, false, vp); gl.uniform1f(L.u.uClip, this.clipZ);
@@ -190,6 +203,21 @@ export class Renderer {
     // extra handle meshes always on top
     gl.depthMask(true);
     if (extras.handles) { gl.clear(gl.DEPTH_BUFFER_BIT); for (const it of extras.handles) drawMesh(it, true); }
+    gl.disable(gl.BLEND);
+  }
+  /** G-code toolpaths: { sets: [{ pos, col, buf?, start, count, alpha }] } drawn as coloured lines. */
+  _drawGcode(g, vp) {
+    const gl = this.gl; const C = this.cline; gl.useProgram(C.p); gl.uniformMatrix4fv(C.u.uVP, false, vp);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    for (const set of g.sets) {
+      if (!set.count) continue;
+      if (!set.buf || set.bufFor !== set.pos) { if (set.buf) { gl.deleteBuffer(set.buf.p); gl.deleteBuffer(set.buf.c); } set.buf = { p: this._buf(set.pos), c: this._buf(set.col) }; set.bufFor = set.pos; }
+      gl.uniform1f(C.u.uAlpha, set.alpha ?? 1);
+      gl.bindBuffer(gl.ARRAY_BUFFER, set.buf.p); gl.enableVertexAttribArray(C.a.aPos); gl.vertexAttribPointer(C.a.aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, set.buf.c); gl.enableVertexAttribArray(C.a.aCol); gl.vertexAttribPointer(C.a.aCol, 3, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.LINES, set.start || 0, set.count);
+      gl.disableVertexAttribArray(C.a.aCol);
+    }
     gl.disable(gl.BLEND);
   }
   _bedLines() {

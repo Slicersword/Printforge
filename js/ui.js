@@ -123,6 +123,7 @@ const ROT_ICON = '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><
 export function renderInspector(app) {
   const el = document.getElementById('inspector'); const s = app.scene; const sel = s.selected();
   if (app.mode === 'prepare' && app.prepPanel) { el.replaceChildren(...app.prepPanel()); return; }
+  if (app.mode === 'preview' && app.previewPanel) { el.replaceChildren(...app.previewPanel().filter(Boolean)); return; }
   if (!sel.length) { el.replaceChildren(...app.platePanel()); return; }
   if (sel.length > 1) { el.replaceChildren(...multiPanel(app, sel)); return; }
   const o = sel[0]; const box = s.worldBox(o);

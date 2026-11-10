@@ -26,6 +26,7 @@ export class Viewport {
   // ------------------------------------------------------------ drawing
   items() {
     const s = this.scene, out = [], prep = this.mode === 'prepare';
+    if (this.mode === 'preview') return out;
     for (const o of s.objects) {
       if (o.visible === false) continue;
       if (prep && o.hole) continue;
@@ -58,6 +59,7 @@ export class Viewport {
     const ms = this.measure;
     if (ms?.a) { const b = ms.b || ms.hover; if (b) extras.lines.push({ data: new Float32Array([...ms.a, ...b]), color: [0.95, 0.45, 0.15, 1], noDepth: true }); }
     this.r.overhang = (this.mode === 'prepare' && this.showOverhang) ? Math.cos((90 - this.scene.settings.overhang) * deg) : 0;
+    this.app.emit?.('draw-extras', extras);
     this.r.draw(items, extras);
     this._labels(box);
     if (ms?.a) { const b = ms.b || ms.hover; if (b) { const d = [b[0] - ms.a[0], b[1] - ms.a[1], b[2] - ms.a[2]]; this._label([(ms.a[0] + b[0]) / 2, (ms.a[1] + b[1]) / 2, (ms.a[2] + b[2]) / 2], `${fmt(Math.hypot(...d), 2)} mm  (Δx ${fmt(Math.abs(d[0]), 1)} · Δy ${fmt(Math.abs(d[1]), 1)} · Δz ${fmt(Math.abs(d[2]), 1)})`, 'measure'); } }

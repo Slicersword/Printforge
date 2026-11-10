@@ -182,16 +182,26 @@ export function openCode(app, obj) {
   d.classList.add('wide'); run(); setTimeout(() => ta.focus(), 50);
 }
 
+const BLURBS = {
+  'Wall hook': 'Screw-on hook with two screw holes. Set the width, height and reach.',
+  'Phone stand': 'Angled stand with an optional cable slot. Set the angle and phone thickness.',
+  'Honeycomb coaster': 'Round coaster with a hexagon pattern recessed into the top.',
+  'Planter with drainage': 'Tapered pot with any number of sides and drain holes.',
+  'Gear pair': 'Two meshing gears placed at the correct centre distance.',
+};
 export function install(app) {
   app.editors = app.editors || {}; app.editors.script = (o) => openCode(app, o);
+  const addExample = (k) => {
+    try { const { man, schema } = runScript(EXAMPLES[k]); free(man); const vals = {}; schema.forEach((f) => { vals[f.key] = f.def; }); app.addShape('script', { _code: EXAMPLES[k], _schema: schema, ...vals }, { name: k }); }
+    catch (e) { app.toast(e.message, 4000); }
+  };
+  app.addAction({ label: 'New code model', group: 'Code', run: () => { app.setMode('design'); openCode(app, null); } });
+  for (const k of Object.keys(EXAMPLES)) app.addAction({ label: k, group: 'Code example', run: () => { app.setMode('design'); addExample(k); } });
   app.library.addTab('code', 'Code', (el) => {
     el.append(h('button', { class: 'btn primary', style: { width: '100%' }, onclick: () => openCode(app, null) }, 'New code model'));
     el.append(h('p', { class: 'note', style: { margin: '8px 0' } }, 'Write a model in JavaScript. Every value in params() becomes a control in the panel, so you can tune the part without touching code again. Good for asking an AI assistant to write parts for you, too.'));
     el.append(h('div', { class: 'group-label' }, 'Examples'));
-    el.append(h('div', { class: 'gen-list' }, ...Object.keys(EXAMPLES).map((k) => h('button', { class: 'gen-btn', style: { gridTemplateColumns: '1fr' }, onclick: () => {
-      try { const { man, schema } = runScript(EXAMPLES[k]); free(man); const vals = {}; schema.forEach((f) => { vals[f.key] = f.def; }); app.addShape('script', { _code: EXAMPLES[k], _schema: schema, ...vals }, { name: k }); }
-      catch (e) { app.toast(e.message, 4000); }
-    } }, h('b', {}, k), h('span', {}, 'Parametric code model')))));
+    el.append(h('div', { class: 'gen-list' }, ...Object.keys(EXAMPLES).map((k) => h('button', { class: 'gen-btn', style: { gridTemplateColumns: '1fr' }, onclick: () => addExample(k) }, h('b', {}, k), h('span', {}, BLURBS[k] || 'Parametric code model')))));
   });
 }
 void kindDef;

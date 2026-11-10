@@ -6,13 +6,14 @@ import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, ax
 import { PRINTERS, printerById } from './printers.js';
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
 import { eulerMatrix, transformDir, fmt, eulerFromMatrix } from './math.js';
-import { hex } from './renderer.js';
+import { hex, PLATES } from './renderer.js';
 
 const STORE_KEY = 'printforge.autosave.v1';
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } } };
 
 class App {
-  constructor() { this.listeners = {}; this.mode = 'design'; this.lockRatio = false; this.plugins = []; }
+  constructor() { this.listeners = {}; this.mode = 'design'; this.lockRatio = false; this.plugins = []; this.actions = []; }
+  addAction(a) { this.actions.push(a); }
   on(e, f) { (this.listeners[e] ||= []).push(f); }
   emit(e, ...a) { (this.listeners[e] || []).forEach((f) => f(...a)); }
 
@@ -29,7 +30,7 @@ class App {
     this.scene.on('toast', (m) => this.toast(m));
     this.on('measure', (on) => { document.getElementById('measureBtn').classList.toggle('on', on); if (on) this.toast('Click two points to measure. Esc to stop.'); });
     this.scene.on('select', () => { if (this._cut && !this.scene.selection.has(this._cut.id)) { this._cut = null; this.view.extraLines = null; } });
-    this.applyTheme(store.get('printforge.theme'));
+    this._initAppearance();
     this.applyPrinter();
     const saved = store.get(STORE_KEY);
     if (saved) { try { this.scene.load(JSON.parse(saved)); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { /* ignore broken autosave */ } }
@@ -43,19 +44,24 @@ class App {
   _changed() {
     const s = this.scene;
     document.getElementById('docName').value = s.name;
-    document.getElementById('emptyHint').hidden = s.objects.length > 0;
+    this.updateHints();
     renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus();
     this.view.redraw(); this.emit('change');
     clearTimeout(this._save); this._save = setTimeout(() => store.set(STORE_KEY, JSON.stringify(s.toJSON())), 600);
   }
   _selChanged() { renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus(); this.view.redraw(); }
-  refresh() { renderInspector(this); renderSelbar(this); renderOutline(this); }
+  refresh() { renderInspector(this); renderSelbar(this); renderOutline(this); this.updateHints(); this.renderStatus(); }
+  updateHints() {
+    document.getElementById('emptyHint').hidden = this.scene.objects.length > 0 || this.mode !== 'design';
+    document.getElementById('previewHint').hidden = this.mode !== 'preview' || !!this.gcode?.data;
+  }
   onLiveChange() { clearTimeout(this._live); this._live = setTimeout(() => { renderInspector(this); this.renderStatus(); }, 60); }
 
   renderStatus() {
     const s = this.scene; const el = document.getElementById('status'); const sel = s.selected();
     const box = sel.length ? s.selectionBox(sel) : null; const p = printerById(s.settings.printer);
     const items = [h('span', {}, h('b', {}, `${p.vendor} ${p.model}`), ` ${p.w}×${p.d}×${p.h} mm`)];
+    if (this.mode === 'preview') { items.push(h('span', {}, this.gcode?.data ? `G-code: ${this.gcode.name}` : 'No G-code open')); el.replaceChildren(...items); return; }
     if (box) items.push(h('span', {}, 'Selection ', h('b', {}, `${fmt(box.max[0] - box.min[0], 1)} × ${fmt(box.max[1] - box.min[1], 1)} × ${fmt(box.max[2] - box.min[2], 1)} mm`)));
     const errs = s.objects.filter((o) => o._error).length; if (errs) items.push(h('span', { class: 'warn' }, `${errs} shape(s) need attention`));
     const looseHoles = s.objects.filter((o) => o.hole && o.visible !== false).length;
@@ -177,12 +183,14 @@ class App {
       case 'open': document.getElementById('fileOpen').click(); break;
       case 'save': this.saveProject(); break;
       case 'import': document.getElementById('fileImport').click(); break;
-      case 'exportMenu': { const m = document.getElementById('exportMenu'); m.hidden = !m.hidden; break; }
-      case 'theme': this.applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark', true); break;
+      case 'exportMenu': case 'appearanceMenu': { const m = document.getElementById(name); const open = m.hidden; this.closeMenus(); m.hidden = !open; break; }
+      case 'palette': this.openPalette?.(); break;
+      case 'gcode': this.openGcode?.(); break;
       case 'help': this.showHelp(); break;
       case 'frame': this.view.fit(); break;
       default:
-        if (name.startsWith('export:')) { document.getElementById('exportMenu').hidden = true; this.export(name.slice(7)); }
+        if (name.startsWith('export:')) { this.closeMenus(); this.export(name.slice(7)); }
+        else if (name.startsWith('quick:')) { const k = name.slice(6); const a = this.actions.find((x) => x.label === k); if (a) a.run(); else this.addShape(k); }
     }
   }
   split(ids) {
@@ -273,15 +281,36 @@ class App {
     const w = s.printer === 'custom' ? (s.customW || 200) : p.w, d = s.printer === 'custom' ? (s.customD || 200) : p.d, hh = s.printer === 'custom' ? (s.customH || 200) : p.h;
     Object.assign(this.view.r.bed, { w, d, h: hh, round: false }); this.view.r._bedKey = null; this.view.redraw(); this.renderStatus?.();
   }
-  applyTheme(t, persist) {
-    const root = document.documentElement;
-    if (t === 'dark' || t === 'light') root.dataset.theme = t; else delete root.dataset.theme;
-    if (persist) store.set('printforge.theme', t);
-    const cs = getComputedStyle(root); const dark = (root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
-    root.dataset.theme = dark ? 'dark' : 'light';
-    const th = this.view.r.theme; th.dark = dark; th.bg = hex(cs.getPropertyValue('--bg').trim() || '#E6EBEF'); th.accent = hex(cs.getPropertyValue('--accent').trim() || '#13858C');
-    this.view.r._bedKey = null; this.view.redraw();
+  _initAppearance() {
+    let a = {}; try { a = JSON.parse(store.get('printforge.appearance') || '{}') || {}; } catch { a = {}; }
+    const old = store.get('printforge.theme'); if (!a.theme && (old === 'light' || old === 'dark')) a.theme = old;
+    this.appearance = { theme: 'system', accent: 'teal', plate: 'textured', ...a };
+    matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (this.appearance.theme === 'system') this.setAppearance({}); });
+    const menu = document.getElementById('appearanceMenu');
+    const themes = [['system', 'System', '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'], ['light', 'Light', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'], ['dark', 'Dark', '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>']];
+    menu.replaceChildren(
+      h('p', { class: 'dm-label' }, 'Theme'),
+      h('div', { class: 'seg theme-seg', role: 'group', 'aria-label': 'Theme' }, ...themes.map(([v, l, ic]) => h('button', { 'data-theme-set': v, onclick: () => this.setAppearance({ theme: v }) }, h('span', { html: ic }), l))),
+      h('p', { class: 'dm-label' }, 'Accent colour'),
+      h('div', { class: 'accent-row', role: 'group', 'aria-label': 'Accent colour' }, ...ACCENTS.map(([v, l]) => h('button', { 'data-accent-set': v, title: l, 'aria-label': l, onclick: () => this.setAppearance({ accent: v }) }, h('span', { class: `acc acc-${v}` })))),
+      h('p', { class: 'dm-label' }, 'Build plate'),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Build plate' }, ...Object.entries(PLATES).map(([v, p]) => h('button', { 'data-plate-set': v, onclick: () => this.setAppearance({ plate: v }) }, p.label))));
+    this.setAppearance({}, false);
   }
+  setAppearance(patch, persist = true) {
+    const a = this.appearance = { ...this.appearance, ...patch }; if (persist) store.set('printforge.appearance', JSON.stringify(a));
+    const root = document.documentElement; const dark = a.theme === 'dark' || (a.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+    root.dataset.theme = dark ? 'dark' : 'light'; root.dataset.accent = a.accent;
+    const cs = getComputedStyle(root); const th = this.view.r.theme;
+    th.dark = dark; th.plate = a.plate; th.bg = hex(cs.getPropertyValue('--stage').trim() || cs.getPropertyValue('--bg').trim() || '#E6EBEF'); th.accent = hex(cs.getPropertyValue('--accent').trim() || '#13858C');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', cs.getPropertyValue('--panel').trim());
+    document.querySelectorAll('[data-theme-set]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.themeSet === a.theme)));
+    document.querySelectorAll('[data-accent-set]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.accentSet === a.accent)));
+    document.querySelectorAll('[data-plate-set]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.plateSet === a.plate)));
+    this.view.r._bedKey = null; this.emit('theme'); this.view.redraw();
+  }
+  applyTheme(t) { this.setAppearance({ theme: t || 'system' }); }
+  closeMenus() { document.querySelectorAll('.dropdown-menu').forEach((m) => { m.hidden = true; }); }
   platePanel() {
     const s = this.scene; const st = s.settings;
     const printerSel = h('select', { 'aria-label': 'Printer', onchange: (e) => { s.edit('printer', () => { st.printer = e.target.value; }); this.applyPrinter(); this.view.fit(); } },
@@ -300,7 +329,7 @@ class App {
     const keys = [['Orbit', 'Left-drag empty space / right-drag'], ['Pan', 'Middle-drag / Shift+right-drag'], ['Zoom', 'Scroll / pinch'], ['Select more', 'Shift+click'], ['Duplicate while dragging', 'Alt+drag'], ['Free move (no snap)', 'Ctrl+drag'],
       ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90°', 'R'], ['Drop to plate', 'D'],
       ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Fit view', 'F'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
-      ['Quick box / cylinder / sphere', 'B / C / S'], ['Measure', 'M'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
+      ['Search every tool', 'Ctrl+K'], ['Quick box / cylinder / sphere', 'B / C / S'], ['Measure', 'M'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
     this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, b)))),
       h('p', { class: 'note', style: { marginTop: '14px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'));
   }
@@ -321,18 +350,27 @@ class App {
   // ------------------------------------------------------------ chrome & keyboard
   _bindChrome() {
     document.querySelectorAll('[data-cmd]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); this.cmd(b.dataset.cmd); }));
-    document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown')) document.getElementById('exportMenu').hidden = true; });
-    document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => { const r = this.view.setView(b.dataset.view); if (b.dataset.view === 'proj') b.textContent = r ? 'Persp' : 'Ortho'; }));
+    document.addEventListener('click', (e) => { if (!e.target.closest('.dropdown')) this.closeMenus(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeMenus(); });
+    document.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => { const r = this.view.setView(b.dataset.view); if (b.dataset.view === 'proj') b.querySelector('span').textContent = r ? 'Persp' : 'Ortho'; }));
     document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => this.setMode(b.dataset.mode)));
     document.querySelectorAll('[data-drawer]').forEach((b) => b.addEventListener('click', () => { const app = document.getElementById('app'); const c = `show-${b.dataset.drawer}`; const on = !app.classList.contains(c); app.classList.remove('show-left', 'show-right'); if (on) app.classList.add(c); }));
     const dn = document.getElementById('docName');
     dn.addEventListener('change', () => this.scene.edit('rename design', () => { this.scene.name = dn.value.trim() || 'Untitled design'; }));
     dn.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') dn.blur(); });
     document.getElementById('fileOpen').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) this.openProject(f); e.target.value = ''; });
-    document.getElementById('fileImport').addEventListener('change', (e) => { this.importFiles([...e.target.files]); e.target.value = ''; });
+    document.getElementById('fileImport').addEventListener('change', (e) => {
+      const files = [...e.target.files]; e.target.value = '';
+      const gc = files.filter((f) => /\.(gcode|gco|g)$|\.gcode\.3mf$/i.test(f.name)); if (gc.length) this.loadGcode?.(gc[0]);
+      const rest = files.filter((f) => !gc.includes(f)); if (rest.length) this.importFiles(rest);
+    });
     const stage = document.getElementById('stage');
     stage.addEventListener('dragover', (e) => { e.preventDefault(); });
-    stage.addEventListener('drop', (e) => { e.preventDefault(); const files = [...e.dataTransfer.files]; const proj = files.find((f) => /\.(pforge|json)$/i.test(f.name)); if (proj) this.openProject(proj); else this.importFiles(files); });
+    stage.addEventListener('drop', (e) => {
+      e.preventDefault(); const files = [...e.dataTransfer.files];
+      const gc = files.find((f) => /\.(gcode|gco|g)$|\.gcode\.3mf$/i.test(f.name)); if (gc) { this.loadGcode?.(gc); return; }
+      const proj = files.find((f) => /\.(pforge|json)$/i.test(f.name)); if (proj) this.openProject(proj); else this.importFiles(files);
+    });
     window.addEventListener('beforeunload', (e) => { if (this.scene.dirty && this.scene.objects.length && !store.get(STORE_KEY)) { e.preventDefault(); } });
     document.addEventListener('keydown', (e) => this._key(e));
   }
@@ -364,7 +402,7 @@ class App {
     if (k === 's') return go(() => this.addShape('sphere'));
     if (k === '?') return go(() => this.showHelp());
     const views = { 7: 'top', 1: 'front', 3: 'right', 0: 'iso' }; if (views[k]) return go(() => this.view.setView(views[k]));
-    if (k === '5') return go(() => { const r = this.view.setView('proj'); document.getElementById('projBtn').textContent = r ? 'Persp' : 'Ortho'; });
+    if (k === '5') return go(() => { const r = this.view.setView('proj'); document.getElementById('projBtn').querySelector('span').textContent = r ? 'Persp' : 'Ortho'; });
     const step = (e.shiftKey ? 10 : 1) * (s.settings.snap || 1);
     const nud = { arrowleft: [-step, 0, 0], arrowright: [step, 0, 0], arrowup: [0, step, 0], arrowdown: [0, -step, 0], pageup: [0, 0, step], pagedown: [0, 0, -step] }[k];
     if (nud && sel.length) return go(() => {
@@ -375,6 +413,7 @@ class App {
   }
 }
 
+const ACCENTS = [['teal', 'Teal'], ['blue', 'Blue'], ['violet', 'Violet'], ['magenta', 'Magenta'], ['orange', 'Orange'], ['green', 'Green']];
 function xyzOnly(m) { const np = m.numProp, vp = m.vertProperties; if (np === 3) return new Float32Array(vp); const n = vp.length / np, out = new Float32Array(n * 3); for (let i = 0; i < n; i++) { out[i * 3] = vp[i * np]; out[i * 3 + 1] = vp[i * np + 1]; out[i * 3 + 2] = vp[i * np + 2]; } return out; }
 function confirmLoss(msg) { return window.confirm(`${msg} Unsaved changes stay in your browser's autosave only until you add something new.`); }
 export { xyzOnly, eulerFromMatrix };
@@ -383,7 +422,7 @@ void transformDir; void K;
 export const app = new App();
 window.printforge = app;
 // Feature modules register themselves before start().
-const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js')]);
+const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js')]);
 for (const m of mods) if (m.status === 'fulfilled' && m.value.install) app.plugins.push(m.value.install);
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !navigator.webdriver) navigator.serviceWorker.register('sw.js').catch(() => {});
 app.start().catch((e) => { document.getElementById('loading').innerHTML = `<p style="max-width:420px;text-align:center">PrintForge could not start: ${e.message}. Use a current Chrome, Edge, Firefox or Safari, and open the page through a web server (GitHub Pages works).</p>`; console.error(e); });

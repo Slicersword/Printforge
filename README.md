@@ -1,6 +1,6 @@
 # PrintForge
 
-Design parts for 3D printing in your browser. Put shapes on the plate, cut holes, draw sketches, generate enclosures, gears and threads, write parametric code models, then check and orient everything for printing and export a 3MF for your slicer.
+Design parts for 3D printing in your browser. Put shapes on the plate, cut holes, draw sketches, generate enclosures, gears and threads, write parametric code models, check and orient everything for printing, export a 3MF for your slicer, then open the sliced G-code to check it layer by layer.
 
 No account, no install, no build step. It is plain HTML, CSS and JavaScript plus the Manifold geometry engine (WebAssembly), so it runs from GitHub Pages or any static web host, and keeps working offline once loaded.
 
@@ -63,9 +63,20 @@ Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly
 - **Overhang view** in red, with an adjustable angle, and a **layer slider** that cuts the model at any layer.
 - **Estimates**: weight, filament length, time and cost for PLA, PETG, ABS, ASA, TPU, nylon or PC, with your layer height, walls and infill.
 
+### G-code preview
+- Open a `.gcode` file from Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Kiri:Moto or any other slicer, or a Bambu `.gcode.3mf`. Drop it on the view or use **Import**.
+- Toolpaths coloured by feature (outer and inner walls, infill, top and bottom, bridges, support, skirt and brim) or by speed. Turn any feature off.
+- Layer slider, a moves slider inside a layer, **This layer only**, travel moves, and **Play** to watch the nozzle.
+- Layers, height, print time and filament from the slicer's notes in the file, with a warning when the file is bigger than your plate.
+
+### Look and feel
+- **Appearance** menu (half-circle button): theme follows your system, or choose Light or Dark; six accent colours; textured, smooth black or cool build plate. Your choice is remembered.
+- **Search tools** (Ctrl K): find any shape, generator, example, command, view or setting by typing part of its name.
+- A start panel on an empty plate with one-click starting points.
+
 ### Files
 - Export **3MF** (separate parts with colours; opens in Bambu Studio, OrcaSlicer, PrusaSlicer, Cura), **STL**, **OBJ + MTL**, the selection only, or every part as its own STL in a zip.
-- Import **STL** (binary or text), **OBJ** and **3MF**. Imported meshes can be cut, grouped with holes and so on.
+- Import **STL** (binary or text), **OBJ** and **3MF**, and open **G-code** for preview. Imported meshes can be cut, grouped with holes and so on.
 - Save and open projects as `.pforge` files. Your current design is also autosaved in the browser.
 
 ## Keyboard shortcuts
@@ -80,6 +91,7 @@ Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly
 | Turn 90° / drop to plate | R / D |
 | Nudge / raise | arrows / Page Up, Page Down (Shift ×10) |
 | Undo / redo | Ctrl Z / Ctrl Shift Z |
+| Search every tool | Ctrl K |
 | Measure | M |
 | Views | 7 top, 1 front, 3 right, 0 iso, 5 perspective/orthographic, F fit |
 | Save / open / export STL | Ctrl S / Ctrl O / Ctrl E |
@@ -101,6 +113,8 @@ js/sketch.js            sketch editor, extrude and revolve
 js/textshape.js         text and image tracing
 js/script.js            code models
 js/printprep.js         print checks, orientation, arrangement, estimates
+js/gcode.js             G-code reader and layer preview
+js/palette.js           Ctrl K command search
 js/io.js                STL, OBJ, 3MF and ZIP read/write
 js/printers.js          printer and material presets
 vendor/                 Manifold (Apache-2.0)
@@ -121,10 +135,13 @@ PrintForge is new code. It brings together workflows from these open-source proj
 
 No source code was copied from those projects; several of them are AGPL or GPL licensed. Printer build volumes are public manufacturer specifications.
 
+See `docs/OPEN-SOURCE.md` for open-source projects worth building on next, with their licences.
+
 ## Limits
 
 - Geometry is mesh-based (Manifold), not a B-rep kernel, so STEP export and true edge fillets aren't available. Rounded boxes, chamfered cylinders and the generators cover common cases.
 - Estimates are approximate; your slicer gives the real numbers.
+- PrintForge doesn't slice yet. Use your slicer, then check the result in G-code preview.
 - Text uses the fonts on the device you're using. Use **Freeze as mesh** to keep text identical across computers.
 
 ## Licence

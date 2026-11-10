@@ -4,10 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PrintForge</title>
-<meta name="description" content="Design parts for 3D printing in your browser: shapes and holes, sketches, parametric generators, code models and print checks. Exports STL, 3MF and OBJ.">
-<meta name="theme-color" content="#13858C">
+<meta name="description" content="Design, check and preview parts for 3D printing in your browser: shapes and holes, sketches, parametric generators, code models, print checks and a G-code viewer. Exports STL, 3MF and OBJ.">
+<meta name="theme-color" content="#F7F9FA">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
+<script>
+  // Apply the saved theme before the page paints, so there is no flash.
+  try {
+    var a = JSON.parse(localStorage.getItem('printforge.appearance') || '{}') || {};
+    var t = a.theme || localStorage.getItem('printforge.theme') || 'system';
+    var dark = t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.accent = a.accent || 'teal';
+  } catch (e) {}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
@@ -25,12 +35,12 @@
       <button data-cmd="new" title="New design">New</button>
       <button data-cmd="open" title="Open a .pforge project (Ctrl+O)">Open</button>
       <button data-cmd="save" title="Save the project file (Ctrl+S)">Save</button>
-      <button data-cmd="import" title="Import STL, OBJ or 3MF">Import</button>
+      <button data-cmd="import" title="Import STL, OBJ, 3MF or G-code">Import</button>
       <div class="dropdown">
-        <button data-cmd="exportMenu" class="primary" aria-haspopup="true">Export</button>
+        <button data-cmd="exportMenu" class="primary" aria-haspopup="true">Export <svg class="caret" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
         <div class="dropdown-menu" id="exportMenu" hidden>
-          <button data-cmd="export:stl">STL <small>one mesh, every slicer</small></button>
           <button data-cmd="export:3mf">3MF <small>separate parts with colours</small></button>
+          <button data-cmd="export:stl">STL <small>one mesh, every slicer</small></button>
           <button data-cmd="export:obj">OBJ <small>with .mtl colours</small></button>
           <hr>
           <button data-cmd="export:sel-stl">Selection as STL</button>
@@ -45,9 +55,14 @@
     <div class="modes" role="tablist" aria-label="Workspace">
       <button role="tab" data-mode="design" aria-selected="true">Design</button>
       <button role="tab" data-mode="prepare" aria-selected="false"><span class="long">Prepare to print</span><span class="short">Prepare</span></button>
+      <button role="tab" data-mode="preview" aria-selected="false"><span class="long">G-code preview</span><span class="short">G-code</span></button>
     </div>
+    <button class="search-btn" data-cmd="palette" title="Search every tool (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search tools</span><kbd>Ctrl K</kbd></button>
     <div class="top-right">
-      <button data-cmd="theme" title="Light or dark" aria-label="Toggle theme"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg></button>
+      <div class="dropdown">
+        <button data-cmd="appearanceMenu" title="Theme, accent colour and plate" aria-label="Appearance" aria-haspopup="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor" stroke="none"/></svg></button>
+        <div class="dropdown-menu appearance" id="appearanceMenu" hidden></div>
+      </div>
       <button data-cmd="help" title="Shortcuts and help (?)" aria-label="Help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.7"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg></button>
     </div>
   </header>
@@ -64,13 +79,13 @@
   <main class="stage" id="stage">
     <canvas id="view" tabindex="0" aria-label="3D view. Drag to orbit, scroll to zoom."></canvas>
     <div class="viewnav" aria-label="Camera">
-      <button data-view="home" title="Fit everything (F)">Fit</button>
-      <button data-view="top" title="Top (7)">Top</button>
-      <button data-view="front" title="Front (1)">Front</button>
-      <button data-view="right" title="Right (3)">Right</button>
-      <button data-view="iso" title="Isometric (0)">Iso</button>
-      <button data-view="proj" title="Perspective or orthographic (5)" id="projBtn">Persp</button>
-      <button data-view="measure" title="Measure between two points (M)" id="measureBtn">Measure</button>
+      <button data-view="home" title="Fit everything (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span></button>
+      <button data-view="top" title="Top (7)"><svg viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4z" fill="currentColor" fill-opacity=".35"/><path d="M4 8v8l8 4 8-4V8"/></svg><span>Top</span></button>
+      <button data-view="front" title="Front (1)"><svg viewBox="0 0 24 24"><path d="M4 8l8 4v8l-8-4z" fill="currentColor" fill-opacity=".35"/><path d="M4 8l8-4 8 4v8l-8 4M12 12l8-4"/></svg><span>Front</span></button>
+      <button data-view="right" title="Right (3)"><svg viewBox="0 0 24 24"><path d="M12 12l8-4v8l-8 4z" fill="currentColor" fill-opacity=".35"/><path d="M12 12L4 8l8-4 8 4M4 8v8l8 4"/></svg><span>Right</span></button>
+      <button data-view="iso" title="Isometric (0)"><svg viewBox="0 0 24 24"><path d="M12 4l8 4v8l-8 4-8-4V8z"/><path d="M4 8l8 4 8-4M12 12v8"/></svg><span>Iso</span></button>
+      <button data-view="proj" title="Perspective or orthographic (5)" id="projBtn"><svg viewBox="0 0 24 24"><path d="M3 6l6 2v8l-6 2zM9 8h12M9 16h12"/></svg><span>Persp</span></button>
+      <button data-view="measure" title="Measure between two points (M)" id="measureBtn"><svg viewBox="0 0 24 24"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg><span>Measure</span></button>
     </div>
     <div class="selbar" id="selbar" hidden></div>
     <div class="layerbar" id="layerbar" hidden>
@@ -78,9 +93,29 @@
       <input type="range" id="layerSlider" min="0" max="100" value="100">
       <output id="layerOut">all</output>
     </div>
+    <div class="layerbar gcodebar" id="gcodebar" hidden>
+      <button class="btn" id="gcPlay" aria-pressed="false">Play</button>
+      <label for="gcLayer">Layer</label>
+      <input type="range" id="gcLayer" min="0" max="0" value="0">
+      <output id="gcLayerOut"></output>
+      <label class="mini" for="gcMoves">Moves</label>
+      <input type="range" id="gcMoves" min="0" max="100" value="100" title="How much of the top layer is drawn">
+      <label class="mini only"><input type="checkbox" id="gcOnly"> This layer only</label>
+    </div>
     <div class="empty-hint" id="emptyHint">
-      <p class="eh-title">Start with a shape</p>
-      <p>Pick one from the library, or press <kbd>B</kbd> for a box. Drag it on the plate, turn it into a hole, and group to cut.</p>
+      <p class="eh-title">What are you making?</p>
+      <div class="quick">
+        <button data-cmd="quick:box"><b>A shape</b><span>Start with a box, then add holes</span></button>
+        <button data-cmd="quick:Electronics enclosure"><b>An enclosure</b><span>Box and lid for a circuit board</span></button>
+        <button data-cmd="quick:New sketch"><b>A sketch</b><span>Draw a profile, then extrude it</span></button>
+        <button data-cmd="import"><b>Open a file</b><span>STL, OBJ, 3MF or G-code</span></button>
+      </div>
+      <p class="eh-foot">Or press <kbd>Ctrl K</kbd> to search every tool.</p>
+    </div>
+    <div class="empty-hint preview-hint" id="previewHint" hidden>
+      <p class="eh-title">Preview your sliced file</p>
+      <p>Open a .gcode file from any slicer to check every layer before you print.</p>
+      <div class="quick one"><button data-cmd="gcode"><b>Open G-code…</b><span>or drop it on the plate</span></button></div>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
@@ -97,7 +132,8 @@
 
 <dialog id="modal" class="modal"></dialog>
 <input type="file" id="fileOpen" accept=".pforge,.json" hidden>
-<input type="file" id="fileImport" accept=".stl,.obj,.3mf" multiple hidden>
+<input type="file" id="fileImport" accept=".stl,.obj,.3mf,.gcode,.gco" multiple hidden>
+<input type="file" id="fileGcode" accept=".gcode,.gco,.g,.3mf" hidden>
 <div id="loading" class="loading"><div class="spinner"></div><p>Loading the geometry engine…</p></div>
 <script type="module" src="js/main.js"></script>
 </body>
