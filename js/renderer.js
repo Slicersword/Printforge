@@ -49,6 +49,7 @@ precision highp float; in vec3 vC; uniform float uAlpha; out vec4 o;
 void main(){ o=vec4(vC,uAlpha); }`;
 // Build plates: [base, minor grid, major grid] for light and dark themes.
 export const PLATES = {
+  studio: { label: 'Studio grey', light: [[0.25, 0.26, 0.28], [0.33, 0.345, 0.365], [0.46, 0.47, 0.5]], dark: [[0.2, 0.205, 0.22], [0.27, 0.28, 0.3], [0.38, 0.39, 0.42]] },
   textured: { label: 'Textured PEI', light: [[0.79, 0.67, 0.43], [0.62, 0.5, 0.3], [0.45, 0.35, 0.2]], dark: [[0.36, 0.3, 0.2], [0.25, 0.21, 0.14], [0.16, 0.13, 0.09]] },
   smooth: { label: 'Smooth black', light: [[0.2, 0.21, 0.23], [0.3, 0.31, 0.34], [0.42, 0.43, 0.47]], dark: [[0.13, 0.14, 0.15], [0.2, 0.21, 0.23], [0.3, 0.31, 0.34]] },
   cool: { label: 'Cool plate', light: [[0.78, 0.8, 0.82], [0.66, 0.68, 0.71], [0.52, 0.54, 0.58]], dark: [[0.32, 0.34, 0.37], [0.25, 0.27, 0.3], [0.18, 0.2, 0.22]] },
@@ -121,7 +122,7 @@ export class Renderer {
     this.cam = new Camera();
     this.buffers = new WeakMap(); // render data -> gl buffers
     this.quad = this._buf(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]));
-    this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66], plate: 'textured' };
+    this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66], plate: 'studio' };
     this.bed = { w: 256, d: 256, h: 250, round: false, origin: 'centre' };
     this.clipZ = 1e9; this.overhang = 0; this.gridStep = 10;
   }
@@ -150,7 +151,7 @@ export class Renderer {
     gl.uniformMatrix4fv(P.u.uVP, false, vp);
     gl.uniform2f(P.u.uSize, bed.round ? bed.w / 2 : bed.w / 2, bed.round ? bed.w / 2 : bed.d / 2);
     gl.uniform1f(P.u.uRound, bed.round ? 1 : 0); gl.uniform1f(P.u.uStep, this.gridStep);
-    const pc = (PLATES[t.plate] || PLATES.textured)[t.dark ? 'dark' : 'light'];
+    const pc = (PLATES[t.plate] || PLATES.studio)[t.dark ? 'dark' : 'light'];
     gl.uniform3fv(P.u.uPlate, pc[0]); gl.uniform3fv(P.u.uMinor, pc[1]); gl.uniform3fv(P.u.uMajor, pc[2]);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);

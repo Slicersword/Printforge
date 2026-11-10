@@ -4,6 +4,9 @@
 // position never rebuilds geometry.
 import Module from '../vendor/manifold.js';
 import { trs } from './math.js';
+import { rebuildSolid } from './repair.js';
+let onRepair = null;
+export function setRepairHandler(f) { onRepair = f; }
 
 export let K = null; // { Manifold, CrossSection, Mesh }
 const builders = new Map(); // kind -> { build(params, ctx) => Manifold, label }
@@ -69,7 +72,18 @@ export function localGeometry(obj) {
   if (hit) return hit;
   let man;
   if (obj.type === 'group') man = buildGroup(obj);
-  else if (obj.type === 'mesh') man = manifoldFromMesh(meshStore.get(obj.meshId));
+  else if (obj.type === 'mesh') {
+    const data = meshStore.get(obj.meshId);
+    try { man = manifoldFromMesh(data); }
+    catch (e) {
+      // Leaky mesh (common from AI generators and scans): rebuild it as a watertight solid once, and keep the result.
+      man = rebuildSolid(K, data);
+      const m = man.getMesh(); const np = m.numProp; const vv = new Float32Array(m.vertProperties.length / np * 3);
+      for (let i = 0, j = 0; i < m.vertProperties.length; i += np, j += 3) { vv[j] = m.vertProperties[i]; vv[j + 1] = m.vertProperties[i + 1]; vv[j + 2] = m.vertProperties[i + 2]; }
+      meshStore.set(obj.meshId, { v: vv, t: new Uint32Array(m.triVerts), repaired: true });
+      onRepair?.(obj, e);
+    }
+  }
   else {
     const def = builders.get(obj.kind);
     if (!def) throw new Error(`Unknown shape “${obj.kind}”`);

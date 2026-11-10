@@ -24,6 +24,35 @@ Checked November 2026. Always read a project's LICENSE file before copying anyth
 | OrcaSlicer, Bambu Studio, PrusaSlicer, Cura | AGPL-3.0 / GPL | Feature names, colours and print-check ideas. |
 | PaliCAD, QymCAD, Extrudo, SolidCraft, Forgent3D, layerling, Easy Enclosure | various | The projects PrintForge's workflows came from. |
 
+## Image and text tools (researched November 2026)
+
+PrintForge now has its own stencil, cookie cutter, badge, lithophane and relief makers. These projects do similar jobs and are useful references:
+
+| Project | Licence | Notes |
+|---|---|---|
+| [LithoMaker](https://github.com/muldjord/lithomaker) | GPL-3.0 | Desktop lithophane maker with frame, hangers and stabilisers. Ideas only. |
+| [lithophane-js](https://gh.r-mj.com/uijincho/lithophane-js) | check repo | Browser lithophane generator. |
+| [hueforge-at-home](https://github.com/LucasKendi/hueforge-at-home) | check repo | Layer-colour mixing (HueForge-style filament painting) in JavaScript. A good next feature. |
+| [cookie-cutter-generator](https://awesome.ecosyste.ms/projects/github.com%2Fpapooch%2Fcookie-cutter-generator) | not stated | OpenSCAD cookie cutters with a stamp of the inner image. |
+| [cookie-cutter-designer](https://awesome.ecosyste.ms/projects/github.com%2Frazorglyon%2Fcookie-cutter-designer) | check repo | Svelte web cookie cutter designer. |
+| [svg2stl](https://awesome.ecosyste.ms/projects/github.com%2Fmaxhalford%2Fsvg2stl) | check repo | SVG to extruded STL. |
+| [awesome-3d-printing](https://www.github.com/ad-si/awesome-3d-printing) | list | Catalogue of slicers, CAD tools and online generators (QR codes, Gridfinity layouts, map terrain, LED letters, box generators). |
+
+## Feature ideas from the research
+
+1. **Filament painting (HueForge-style)**: a picture printed in 3–5 colours by changing filament at set layers. Builds on the relief maker plus a colour-change table for the slicer.
+2. **QR code and NFC tags**: a QR encoder (MIT libraries exist, such as qrcode-generator) feeding the badge maker.
+3. **Terrain and map models** from height data.
+4. **Gridfinity layout planner** for whole drawers, on top of the existing bin generator.
+5. **Print-in-place hinges, snap fits and threaded lids** as generators.
+6. **Text along a curve and on cylinders** (mug-style labels).
+7. **Hollow with drain holes** for resin prints, and **mesh repair** (Kiri:Moto's Mesh:Tool is MIT).
+8. **Slicing in the browser** with Kiri:Moto (MIT), then straight to the G-code preview.
+
+## AI services (researched November 2026)
+
+See `AI-PLATFORMS.md`. Gemini, Claude, OpenAI-compatible services, Zoo Text-to-CAD, Tripo3D and TRELLIS (via the Gradio client, Apache-2.0, loaded from jsDelivr) are built in.
+
 ## Suggested next steps
 
 1. **Slice inside PrintForge** with Kiri:Moto's engine (MIT): Design → Prepare → Slice → G-code preview, all in one tab.

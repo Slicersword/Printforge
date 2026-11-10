@@ -1,4 +1,4 @@
-import { initKernel, K, worldManifold, localGeometry, free, kindDef } from './kernel.js';
+import { initKernel, K, worldManifold, localGeometry, free, kindDef, setRepairHandler } from './kernel.js';
 import { Scene, makeShape, uid, nextColor, cloneObj } from './scene.js';
 import { SHAPES, defaults } from './shapes.js';
 import { Viewport } from './viewport.js';
@@ -20,6 +20,7 @@ class App {
   async start() {
     await initKernel();
     this.scene = new Scene();
+    setRepairHandler((o) => setTimeout(() => this.toast(`“${o.name}” had holes or loose faces, so it was rebuilt as a solid. Check small details.`, 5000), 50));
     this.view = new Viewport(this, document.getElementById('view'));
     this.library = new Library(this);
     this.library.addTab('shapes', 'Shapes', shapesTab(this));
@@ -186,6 +187,7 @@ class App {
       case 'exportMenu': case 'appearanceMenu': { const m = document.getElementById(name); const open = m.hidden; this.closeMenus(); m.hidden = !open; break; }
       case 'palette': this.openPalette?.(); break;
       case 'gcode': this.openGcode?.(); break;
+      case 'ai': this.openAI?.(); break;
       case 'help': this.showHelp(); break;
       case 'frame': this.view.fit(); break;
       default:
@@ -260,19 +262,26 @@ class App {
     catch (e) { this.toast(e.message || 'This file could not be opened.', 4000); }
   }
   async importFiles(files) {
-    const s = this.scene; const added = [];
+    const all = [];
     for (const f of files) {
-      try {
-        const parts = await importFile(f);
-        for (const p of parts) { if (!p.t.length) continue; const o = this.addMesh(p.name, p.v, p.t, p.color); localGeometry(o); added.push(o); }
-      } catch (e) { this.toast(`${f.name}: ${e.message}`, 5000); }
+      try { all.push(...(await importFile(f))); } catch (e) { this.toast(`${f.name}: ${e.message}`, 5000); }
     }
-    if (!added.length) return;
-    s.edit('import', () => { for (const o of added) { s.objects.push(o); } s.dropToPlate(added, true); s.selection = new Set(added.map((o) => o.id)); });
-    // Centre the import on the plate if it came in far away.
+    return this.addParts(all, 'import');
+  }
+  /** Add triangle meshes [{name, v, t, color}] to the plate, repairing leaky ones. Returns the new objects. */
+  addParts(parts, label = 'import') {
+    const s = this.scene; const added = [];
+    for (const p of parts) {
+      if (!p.t.length) continue; const o = this.addMesh(p.name, p.v, p.t, p.color);
+      try { localGeometry(o); added.push(o); } catch (e) { this.scene.meshes.delete(o.meshId); this.toast(`${p.name}: ${e.message}`, 5000); }
+    }
+    if (!added.length) return [];
+    s.edit(label, () => { for (const o of added) { s.objects.push(o); } s.dropToPlate(added, true); s.selection = new Set(added.map((o) => o.id)); });
+    // Centre the new parts on the plate if they came in far away.
     const box = s.selectionBox(added); const b = this.view.r.bed;
-    if (box && (Math.abs(box.min[0]) > b.w || Math.abs(box.min[1]) > b.d)) { const c = box.min.map((v, i) => (v + box.max[i]) / 2); added.forEach((o) => { o.pos = [o.pos[0] - c[0], o.pos[1] - c[1], o.pos[2]]; }); }
-    s.emit('select'); this._changed(); this.view.fit(); this.toast(`Imported ${added.length} object${added.length > 1 ? 's' : ''}`);
+    if (box && (Math.abs(box.min[0]) > b.w / 2 || Math.abs(box.min[1]) > b.d / 2)) { const c = box.min.map((v, i) => (v + box.max[i]) / 2); added.forEach((o) => { o.pos = [o.pos[0] - c[0], o.pos[1] - c[1], o.pos[2]]; }); }
+    s.emit('select'); this._changed(); this.view.fit(); if (label === 'import') this.toast(`Imported ${added.length} object${added.length > 1 ? 's' : ''}`);
+    return added;
   }
 
   // ------------------------------------------------------------ settings, theme, help
@@ -284,7 +293,8 @@ class App {
   _initAppearance() {
     let a = {}; try { a = JSON.parse(store.get('printforge.appearance') || '{}') || {}; } catch { a = {}; }
     const old = store.get('printforge.theme'); if (!a.theme && (old === 'light' || old === 'dark')) a.theme = old;
-    this.appearance = { theme: 'system', accent: 'teal', plate: 'textured', ...a };
+    if (a.v !== 3) { a.plate = 'studio'; a.v = 3; } // v3: new default plate in the Bambu Studio style
+    this.appearance = { theme: 'system', accent: 'teal', plate: 'studio', ...a };
     matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (this.appearance.theme === 'system') this.setAppearance({}); });
     const menu = document.getElementById('appearanceMenu');
     const themes = [['system', 'System', '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'], ['light', 'Light', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>'], ['dark', 'Dark', '<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>']];
@@ -294,7 +304,7 @@ class App {
       h('p', { class: 'dm-label' }, 'Accent colour'),
       h('div', { class: 'accent-row', role: 'group', 'aria-label': 'Accent colour' }, ...ACCENTS.map(([v, l]) => h('button', { 'data-accent-set': v, title: l, 'aria-label': l, onclick: () => this.setAppearance({ accent: v }) }, h('span', { class: `acc acc-${v}` })))),
       h('p', { class: 'dm-label' }, 'Build plate'),
-      h('div', { class: 'seg', role: 'group', 'aria-label': 'Build plate' }, ...Object.entries(PLATES).map(([v, p]) => h('button', { 'data-plate-set': v, onclick: () => this.setAppearance({ plate: v }) }, p.label))));
+      h('div', { class: 'seg plate-grid', role: 'group', 'aria-label': 'Build plate' }, ...Object.entries(PLATES).map(([v, p]) => h('button', { 'data-plate-set': v, onclick: () => this.setAppearance({ plate: v }) }, p.label))));
     this.setAppearance({}, false);
   }
   setAppearance(patch, persist = true) {
@@ -422,7 +432,7 @@ void transformDir; void K;
 export const app = new App();
 window.printforge = app;
 // Feature modules register themselves before start().
-const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js')]);
+const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js')]);
 for (const m of mods) if (m.status === 'fulfilled' && m.value.install) app.plugins.push(m.value.install);
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !navigator.webdriver) navigator.serviceWorker.register('sw.js').catch(() => {});
 app.start().catch((e) => { document.getElementById('loading').innerHTML = `<p style="max-width:420px;text-align:center">PrintForge could not start: ${e.message}. Use a current Chrome, Edge, Firefox or Safari, and open the page through a web server (GitHub Pages works).</p>`; console.error(e); });

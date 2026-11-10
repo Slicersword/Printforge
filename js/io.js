@@ -120,7 +120,8 @@ export async function importFile(file) {
   if (ext === 'stl') return [{ name: base, ...parseSTL(buf) }];
   if (ext === 'obj') return parseOBJ(new TextDecoder().decode(buf), base);
   if (ext === '3mf') return parse3MF(buf, base);
-  throw new Error(`“.${ext}” files can't be imported. Use STL, OBJ or 3MF.`);
+  if (ext === 'glb') { const parts = parseGLB(buf, base); return toMillimetres(parts); }
+  throw new Error(`“.${ext}” files can't be imported. Use STL, OBJ, 3MF or GLB.`);
 }
 
 export function parseSTL(buf) {
@@ -196,3 +197,64 @@ export function download(blob, filename) {
 function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
 function fx(x) { return Number(x.toFixed(5)).toString(); }
 function safe(s) { return String(s).replace(/\s+/g, '_'); }
+
+// ---------------------------------------------------------------- GLB (binary glTF 2.0)
+const MUL = (a, b) => { const o = new Array(16).fill(0); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k]; return o; };
+function nodeMatrix(n) {
+  if (n.matrix) return n.matrix;
+  const [tx, ty, tz] = n.translation || [0, 0, 0], [qx, qy, qz, qw] = n.rotation || [0, 0, 0, 1], [sx, sy, sz] = n.scale || [1, 1, 1];
+  return [(1 - 2 * (qy * qy + qz * qz)) * sx, 2 * (qx * qy + qz * qw) * sx, 2 * (qx * qz - qy * qw) * sx, 0,
+    2 * (qx * qy - qz * qw) * sy, (1 - 2 * (qx * qx + qz * qz)) * sy, 2 * (qy * qz + qx * qw) * sy, 0,
+    2 * (qx * qz + qy * qw) * sz, 2 * (qy * qz - qx * qw) * sz, (1 - 2 * (qx * qx + qy * qy)) * sz, 0, tx, ty, tz, 1];
+}
+/** Triangles from every mesh in the default scene, converted from glTF's Y-up to Z-up. Units unchanged (glTF uses metres). */
+export function parseGLB(buf, base = 'model') {
+  const dv = new DataView(buf);
+  if (dv.getUint32(0, true) !== 0x46546C67) throw new Error('This is not a binary glTF (.glb) file.');
+  let off = 12; let json = null, bin = null;
+  while (off < buf.byteLength) {
+    const len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true);
+    if (type === 0x4E4F534A) json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, off + 8, len)));
+    else if (type === 0x004E4942) bin = new Uint8Array(buf, off + 8, len);
+    off += 8 + len;
+  }
+  if (!json) throw new Error('This GLB file has no scene data.');
+  if ((json.extensionsRequired || []).some((e) => /draco|meshopt/i.test(e))) throw new Error('This GLB uses mesh compression (Draco or Meshopt), which PrintForge can’t read yet. Export it as STL or uncompressed GLB.');
+  const acc = (i) => {
+    const a = json.accessors[i]; const bv = json.bufferViews[a.bufferView]; const comps = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[a.type];
+    const start = (bv.byteOffset || 0) + (a.byteOffset || 0); const C = { 5126: Float32Array, 5125: Uint32Array, 5123: Uint16Array, 5121: Uint8Array }[a.componentType];
+    const stride = bv.byteStride || comps * C.BYTES_PER_ELEMENT; const out = new (a.componentType === 5126 ? Float32Array : Uint32Array)(a.count * comps);
+    const view = new DataView(bin.buffer, bin.byteOffset + start);
+    const get = { 5126: (o) => view.getFloat32(o, true), 5125: (o) => view.getUint32(o, true), 5123: (o) => view.getUint16(o, true), 5121: (o) => view.getUint8(o) }[a.componentType];
+    for (let e = 0; e < a.count; e++) for (let c = 0; c < comps; c++) out[e * comps + c] = get(e * stride + c * C.BYTES_PER_ELEMENT);
+    return out;
+  };
+  const pts = [];
+  const visit = (ni, parent) => {
+    const node = json.nodes[ni]; const M = MUL(parent, nodeMatrix(node));
+    if (node.mesh !== undefined) for (const prim of json.meshes[node.mesh].primitives) {
+      if ((prim.mode ?? 4) !== 4 || prim.attributes.POSITION === undefined) continue;
+      const P = acc(prim.attributes.POSITION); const I = prim.indices !== undefined ? acc(prim.indices) : Uint32Array.from({ length: P.length / 3 }, (_, k) => k);
+      for (const k of I) { const x = P[k * 3], y = P[k * 3 + 1], z = P[k * 3 + 2]; const wx = M[0] * x + M[4] * y + M[8] * z + M[12], wy = M[1] * x + M[5] * y + M[9] * z + M[13], wz = M[2] * x + M[6] * y + M[10] * z + M[14]; pts.push(wx, -wz, wy); }
+    }
+    for (const c of node.children || []) visit(c, M);
+  };
+  const scene = json.scenes?.[json.scene ?? 0]; const roots = scene ? scene.nodes : json.nodes.map((_, i) => i);
+  const I4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; for (const r of roots) visit(r, I4);
+  if (!pts.length) throw new Error('This GLB file has no triangles.');
+  return [{ name: base, ...weld(pts) }];
+}
+/** glTF files are in metres; small models are scaled up to millimetres. */
+function toMillimetres(parts) {
+  let m = 0; for (const p of parts) for (const x of p.v) m = Math.max(m, Math.abs(x));
+  if (m > 0 && m < 10) for (const p of parts) for (let i = 0; i < p.v.length; i++) p.v[i] *= 1000;
+  return parts;
+}
+/** Scale parts so the largest side is `size` mm. */
+export function scaleToSize(parts, size) {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of parts) for (let i = 0; i < p.v.length; i += 3) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], p.v[i + k]); hi[k] = Math.max(hi[k], p.v[i + k]); }
+  const s = size / Math.max(...hi.map((x, i) => x - lo[i])); if (!isFinite(s) || s <= 0) return parts;
+  for (const p of parts) for (let i = 0; i < p.v.length; i++) p.v[i] *= s;
+  return parts;
+}

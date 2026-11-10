@@ -157,6 +157,7 @@ export function renderInspector(app) {
       if (def.note) parts.push(h('p', { class: 'note' }, def.note));
     }
     if (def?.editor) parts.push(h('button', { class: 'btn primary', onclick: () => app.openEditor(o) }, def.editorLabel || 'Edit'));
+    if (o.kind === 'script' && app.openAI) parts.push(h('button', { class: 'btn', onclick: () => app.openAI() }, 'Change with AI…'));
   }
   if (o.type === 'group') parts.push(h('p', { class: 'note' }, `Group of ${o.children.length}: ${o.children.filter((c) => c.hole).length} hole(s) cut from ${o.children.filter((c) => !c.hole).length} solid(s).`));
   if (o.type === 'mesh') parts.push(h('p', { class: 'note' }, 'Imported mesh. Move, scale, rotate, group and cut it like any other shape.'));

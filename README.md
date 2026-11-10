@@ -63,6 +63,32 @@ Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly
 - **Overhang view** in red, with an adjustable angle, and a **layer slider** that cuts the model at any layer.
 - **Estimates**: weight, filament length, time and cost for PLA, PETG, ABS, ASA, TPU, nylon or PC, with your layer height, walls and infill.
 
+### Make it with AI
+Click **AI** and pick a platform. Each one keeps its own key in your browser, so switching platforms picks up the right key. Full details, free tiers and the optional relay: `docs/AI-PLATFORMS.md`.
+
+| Platform | Gives you | From |
+|---|---|---|
+| Gemini (Google AI Studio, free tier) | An editable code model | Text |
+| Claude (Anthropic API) | An editable code model | Text |
+| OpenAI-compatible (OpenAI, OpenRouter, Groq, Ollama, LM Studio) | An editable code model | Text |
+| Zoo Text-to-CAD | A CAD mesh | Text |
+| Tripo3D | A detailed mesh | Text or a picture |
+| TRELLIS on Hugging Face (free GPU) | A mesh | A picture |
+
+- Code models come with their main sizes as controls in the panel. If the AI's code fails, the error goes back to it to fix, up to twice. Select one and use **Change with AI** to ask for changes.
+- Meshes are scaled to the size you choose. Leaky meshes are rebuilt as watertight solids automatically.
+- GLB files can now be imported too.
+
+### Image and text tools (Image tab)
+- **Stencil**: your image or text cut out of a plate, with bridges added automatically so the middles of O, A, R and so on don't fall out.
+- **Cookie cutter**: a blade that follows the outline, a rim to press on, optional ridges for inner details.
+- **Logo badge / keychain**: raised logo or text on a base that follows the outline, a rectangle or a circle, with a keyring loop.
+- **Lithophane**: a photo that shows when light shines through it. Flat or curved, with a frame, printed standing up.
+- **Relief picture**: a photo or drawing raised from a flat plate.
+
+### Calibration prints (Code tab)
+Tolerance test, overhang test, bridge test and retraction test, each with editable sizes.
+
 ### G-code preview
 - Open a `.gcode` file from Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Kiri:Moto or any other slicer, or a Bambu `.gcode.3mf`. Drop it on the view or use **Import**.
 - Toolpaths coloured by feature (outer and inner walls, infill, top and bottom, bridges, support, skirt and brim) or by speed. Turn any feature off.
@@ -70,7 +96,7 @@ Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly
 - Layers, height, print time and filament from the slicer's notes in the file, with a warning when the file is bigger than your plate.
 
 ### Look and feel
-- **Appearance** menu (half-circle button): theme follows your system, or choose Light or Dark; six accent colours; textured, smooth black or cool build plate. Your choice is remembered.
+- **Appearance** menu (half-circle button): theme follows your system, or choose Light or Dark; six accent colours; Studio grey (like Bambu Studio, the default), textured, smooth black or cool build plate. Your choice is remembered.
 - **Search tools** (Ctrl K): find any shape, generator, example, command, view or setting by typing part of its name.
 - A start panel on an empty plate with one-click starting points.
 
@@ -115,6 +141,10 @@ js/script.js            code models
 js/printprep.js         print checks, orientation, arrangement, estimates
 js/gcode.js             G-code reader and layer preview
 js/palette.js           Ctrl K command search
+js/makers.js            stencil, cookie cutter, badge, lithophane, relief
+js/ai.js                AI platforms (Gemini, Claude, OpenAI-compatible, Zoo, Tripo3D, TRELLIS)
+js/repair.js            rebuilds leaky meshes as watertight solids
+relay/worker.js         optional Cloudflare relay for Zoo and Tripo3D
 js/io.js                STL, OBJ, 3MF and ZIP read/write
 js/printers.js          printer and material presets
 vendor/                 Manifold (Apache-2.0)

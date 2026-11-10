@@ -140,6 +140,42 @@ const a = gear(p.module, p.teethA, p.thickness, 5);
 const b = gear(p.module, p.teethB, p.thickness, 5);
 const centre = p.module * (p.teethA + p.teethB) / 2;
 return union(a, b.rotate([0, 0, 180 / p.teethB]).translate([centre, 0, 0]));`,
+  'Tolerance test': `// Pegs and holes with growing clearance. The gap number is shown by the bumps next to each hole.
+const p = params({ peg: [10, 4, 20, 0.5], height: [8, 4, 20], tests: [5, 2, 8], start: [0.1, 0, 0.5, 0.05], step: [0.1, 0.05, 0.3, 0.05] });
+const pitch = p.peg + 8; const x0 = -pitch * p.tests / 2 + pitch / 2;
+const plate = box(pitch * p.tests + 4, p.peg + 12, 3, 2);
+const holes = repeat(p.tests, (i) => cyl(p.peg + 2 * (p.start + i * p.step), 10).translate([x0 + i * pitch, 0, -1]));
+const marks = repeat(p.tests, (i) => repeat(i + 1, (k) => box(1, 2.5, 0.6).translate([x0 + i * pitch - i + k * 2, -(p.peg + 12) / 2 + 2, 3])));
+const pegs = repeat(p.tests, (i) => cyl(p.peg, p.height).translate([x0 + i * pitch, p.peg + 14, 0]));
+return union(subtract(plate, holes), marks, pegs);`,
+  'Overhang test': `// Ledges with steeper and steeper undersides (angle from vertical). See where yours start to sag.
+const p = params({ from: [30, 15, 60, 5], to: [70, 40, 85, 5], step: [10, 5, 15, 5], reach: [10, 5, 20], width: [12, 6, 30] });
+const n = Math.floor((p.to - p.from) / p.step) + 1;
+let z = 3; const ledges = [];
+for (let i = 0; i < n; i++) {
+  const a = p.from + i * p.step; const drop = p.reach / tan(a);
+  ledges.push(extrude(poly([[0, 0], [p.reach, drop], [p.reach, drop + 1.2], [0, drop + 1.2]]), p.width).rotate([90, 0, 0]).translate([0, p.width / 2, z]));
+  ledges.push(repeat(i + 1, (k) => box(1, 1, 1).translate([-4.3, -p.width / 2 + 1.5 + k * 2, z + drop])));
+  z += drop + 1.2 + 3;
+}
+const wall = box(4, p.width, z + 2).translate([-2, 0, 0]);
+return union(wall, ledges, box(p.reach + 8, p.width + 4, 1).translate([p.reach / 2 - 2, 0, 0]));`,
+  'Bridge test': `// Flat bridges of growing length between two pillars.
+const p = params({ shortest: [10, 5, 40], longest: [50, 20, 120], step: [10, 5, 20], height: [10, 3, 30], width: [6, 3, 15] });
+const n = Math.floor((p.longest - p.shortest) / p.step) + 1; const row = p.width + 3;
+const parts = [box(p.longest + 12, n * row + 3, 1)];
+for (let i = 0; i < n; i++) {
+  const span = p.shortest + i * p.step; const y = -n * row / 2 + row / 2 + i * row + 1.5;
+  for (const s of [-1, 1]) parts.push(box(4, p.width, p.height + 1.2).translate([s * (span / 2 + 2), y, 0]));
+  parts.push(box(span + 8, p.width, 1.2).translate([0, y, p.height]));
+}
+return union(parts);`,
+  'Retraction test': `// Two thin towers. Strings between them mean you need more retraction or a lower temperature.
+const p = params({ gap: [40, 15, 120], height: [40, 10, 120], tower: [6, 3, 15, 0.5] });
+return union(
+  box(p.gap + p.tower + 8, p.tower + 8, 1, 2),
+  cone(p.tower, p.tower * 0.6, p.height).translate([-p.gap / 2, 0, 0]),
+  cone(p.tower, p.tower * 0.6, p.height).translate([p.gap / 2, 0, 0]));`,
 };
 
 // ------------------------------------------------------------------ editor
@@ -188,6 +224,10 @@ const BLURBS = {
   'Honeycomb coaster': 'Round coaster with a hexagon pattern recessed into the top.',
   'Planter with drainage': 'Tapered pot with any number of sides and drain holes.',
   'Gear pair': 'Two meshing gears placed at the correct centre distance.',
+  'Tolerance test': 'Pegs and holes with growing gaps, to find the clearance your printer needs.',
+  'Overhang test': 'Ledges from gentle to steep, to see the overhang angle your printer can manage.',
+  'Bridge test': 'Bridges of growing length, to see how far you can span without support.',
+  'Retraction test': 'Two thin towers for tuning retraction and stringing.',
 };
 export function install(app) {
   app.editors = app.editors || {}; app.editors.script = (o) => openCode(app, o);

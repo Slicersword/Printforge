@@ -278,7 +278,7 @@ gen('tag', {
 // ------------------------------------------------------------------ UI tab
 export function install(app) {
   for (const g of GENERATORS) app.addAction({ label: g.label, group: 'Generator', iconHtml: g.icon, run: () => { app.setMode('design'); app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS }); } });
-  app.library.addTab('generators', 'Generators', (el) => {
+  app.library.addTab('generators', 'Parts', (el) => {
     el.append(h('p', { class: 'note', style: { marginBottom: '8px' } }, 'Complete parts from a few measurements. Every number stays editable in the panel on the right.'));
     el.append(h('div', { class: 'gen-list' }, ...GENERATORS.map((g) => h('button', { class: 'gen-btn', onclick: () => app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS }) },
       h('span', { html: g.icon }), h('b', {}, g.label), h('span', {}, g.blurb)))));
