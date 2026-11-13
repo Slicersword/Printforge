@@ -183,8 +183,9 @@ export class Viewport {
   _axisHandleMatrix(axis, pos, sc) {
     // local +Z maps to: X axis -> +X (rotate +90° about Y), Y axis -> +Y (rotate -90° about X), Z axis -> +Z (identity)
     let R;
-    if (axis === 0) R = [0, 0, -1, 1, 0, 0, 0, -1, 0];     // columns of rotation sending Z->X
-    else if (axis === 1) R = [1, 0, 0, 0, 0, 1, 0, -1, 0];  // Z->Y
+    // columns are where local X, Y and Z end up; the last column is the arrow's pointing direction
+    if (axis === 0) R = [0, 0, -1, 0, 1, 0, 1, 0, 0];       // +90° about Y: Z -> +X
+    else if (axis === 1) R = [1, 0, 0, 0, 0, -1, 0, 1, 0];  // -90° about X: Z -> +Y
     else R = [1, 0, 0, 0, 1, 0, 0, 0, 1];                   // Z->Z
     return new Float64Array([
       R[0] * sc, R[1] * sc, R[2] * sc, 0,
@@ -198,7 +199,14 @@ export class Viewport {
     const host = this.canvas.parentElement;
     this.labels.forEach((l) => l.remove()); this.labels = [];
     if (!box || this.dragging) { if (!box) return; }
-    const add = (p, text) => { const q = this.r.project(p); if (!q) return; const d = document.createElement('div'); d.className = 'dimlabel'; d.textContent = text; d.style.left = q[0] + 'px'; d.style.top = q[1] + 'px'; host.appendChild(d); this.labels.push(d); };
+    const placed = [];
+    const add = (p, text) => {
+      const q = this.r.project(p); if (!q) return; let [x, y] = q;
+      // nudge a label down until it no longer sits on top of one already placed
+      for (let n = 0; n < 6 && placed.some(([a, b]) => Math.abs(a - x) < 44 && Math.abs(b - y) < 22); n++) y += 24;
+      placed.push([x, y]);
+      const d = document.createElement('div'); d.className = 'dimlabel'; d.textContent = text; d.style.left = x + 'px'; d.style.top = y + 'px'; host.appendChild(d); this.labels.push(d);
+    };
     const [x0, y0, z0] = box.min, [x1, y1, z1] = box.max;
     const qa = this.r.project(box.min), qb = this.r.project(box.max);
     if (qa && qb && Math.hypot(qa[0] - qb[0], qa[1] - qb[1]) < 70) return; // too small on screen for readable labels
