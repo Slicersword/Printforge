@@ -87,6 +87,10 @@ Drag the edge of the left or right panel to make it wider or narrower (double-cl
 - **Objects list** works from the keyboard: arrows move the selection (Shift adds), Space toggles, Enter jumps to the properties, Delete removes.
 - Drag a file anywhere on the window; a drop zone shows what you can open.
 
+### LED channel corners and hexagon wall lights
+- **LED strip channel**: 45° mitres now cut correctly. Choose whether mitred corners turn left or right, and add **corner joints**: L-shaped sleeves that slide over two mitred ends and hold them square.
+- **Hexagon wall lights** (Parts tab): a honeycomb wall light made of LED channel bars with snap-in diffusers, joined by 2-way and 3-way connectors that screw to the wall. Pick one hexagon, three, seven (flower or a row like the classic garage hex lights) or a grid, and the hexagon size. The panel lists how many bars and connectors to print and how much LED strip you need. Show **One of each part** to print, then use Make many for copies.
+
 ### Layer Studio, QR codes, molds and more (ideas from usestl.com)
 
 - **Layer Studio** (Studio tab): build signs, tags and keychains layer by layer. Each layer has its own thickness and colour and holds text, icons, your own SVG or image, QR codes, rectangles, circles and polygons, an outline that follows everything above it, keyring loops that stick to the edge, and holes through every layer. Where layers overlap they interlock: the upper layer sinks into a pocket in the one below, so colours sit flush. Each layer is its own object, so a 3MF keeps the colours. Presets: QR code sign, Wi-Fi QR sign, QR keychain, name keychain, letter keychain, icon tag and door sign. Double-click a layer on the plate to edit the design again.

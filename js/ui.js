@@ -211,7 +211,7 @@ export function renderInspector(app) {
     if (schema?.length) {
       const form = paramForm(schema, o.params, (p) => app.setParams(o, p, `change ${def.label?.toLowerCase() || 'shape'}`));
       parts.push(h('fieldset', {}, h('legend', {}, `${def.label || o.kind} settings`), ...form.childNodes));
-      if (def.note) parts.push(h('p', { class: 'note' }, def.note));
+      if (def.note) parts.push(h('p', { class: 'note' }, typeof def.note === 'function' ? def.note(o.params) : def.note));
     }
     if (def?.editor) parts.push(h('button', { class: 'btn primary', onclick: () => app.openEditor(o) }, def.editorLabel || 'Edit'));
     if (app.canMakeMany?.(o)) parts.push(h('button', { class: 'btn', title: 'One copy for each name in a list', onclick: () => app.makeMany(o) }, 'Make many at once…'));

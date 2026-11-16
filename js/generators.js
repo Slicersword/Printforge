@@ -311,12 +311,27 @@ function ledDiffuserProfile(p, K) {
   return CS.union([cover, leg(1), leg(-1)]);
 }
 function along(cs, L, K) { return cs.extrude(L).rotate([90, 0, 0]).rotate([0, 0, 90]).translate([-L / 2, 0, 0]); }
+// Keep the side of a vertical plane where n·(x, y) ≤ d (n is a unit vector in XY).
+function halfSpace(K, nx, ny, d, size = 4000) {
+  return K.Manifold.cube([size, size, size], true).translate([-size / 2, 0, 0]).rotate([0, 0, Math.atan2(ny, nx) * 180 / Math.PI]).translate([nx * d, ny * d, 0]);
+}
+// 45° mitre: the back side (+y) of the channel is the inside of the corner, so it is shorter by one channel width.
+// "Corner turns" = right mirrors that, so the front side is the inside.
 function mitreCut(m, p, K, Wo) {
-  const big = 4 * (Wo + p.h + 50);
-  const cutter = (sign) => K.Manifold.cube([big, big, big], true).translate([sign * big / 2, 0, 0]).rotate([0, 0, -sign * 45]);
-  if (p.startEnd === 'miter') m = m.subtract(cutter(-1).translate([-p.len / 2, -Wo / 2, 0]));
-  if (p.finishEnd === 'miter') m = m.subtract(cutter(1).translate([p.len / 2, -Wo / 2, 0]));
-  return m;
+  const s = Math.SQRT1_2;
+  if (p.finishEnd === 'miter') m = m.intersect(halfSpace(K, s, s, s * (p.len / 2 - Wo / 2)));
+  if (p.startEnd === 'miter') m = m.intersect(halfSpace(K, -s, s, s * (p.len / 2 - Wo / 2)));
+  return p.miterSide === 'right' ? m.mirror([0, 1, 0]) : m;
+}
+// Corner joint: an L-shaped sleeve that slides over two mitred channel ends and holds them at 90°.
+function ledCornerJoint(p, K) {
+  const { Wo } = ledDims(p); const M = K.Manifold; const s = Math.SQRT1_2;
+  const g = 0.2, jw = 1.4, jl = p.jlen / 2, iW = Wo + 2 * g, oW = iW + 2 * jw, jh = p.h - 0.6;
+  const inner = K.CrossSection.ofPolygons([[[-iW / 2 + 0.4, -0.01], [iW / 2 - 0.4, -0.01], [iW / 2, 0.4], [iW / 2, jh + 1], [-iW / 2, jh + 1], [-iW / 2, 0.4]]]);
+  const prof = K.CrossSection.square([oW, jh + jw]).translate([-oW / 2, -jw]).subtract(inner);
+  // arm along -x from the corner centre (0,0), long enough to pass the mitre line x + y = 0
+  const L = jl + oW; const arm = along(prof, L, K).translate([-L / 2 + oW / 2, 0, 0]).intersect(halfSpace(K, s, s, 0));
+  return M.union([arm, arm.mirror([s, s, 0])]); // second arm along +y
 }
 function ledCap(p, K, kind) {
   const { W, Wo, g0, ct } = ledDims(p); const t = 2, plug = 8, cl = Math.max(0.1, p.clr);
@@ -330,16 +345,17 @@ function ledCap(p, K, kind) {
   return cap; // plate at x ∈ [-t, 0], plug pointing +x (into the channel)
 }
 gen('ledchannel', {
-  label: 'LED strip channel', blurb: 'Channel with a snap-in diffuser sized to your strip. End caps, 45° mitres for corners and joiners.',
+  label: 'LED strip channel', blurb: 'Channel with a snap-in diffuser sized to your strip. End caps, 45° mitres, corner joints and joiners.',
   icon: gicon('<path d="M3 13h26v8H3z"/><path d="M3 13l2-2h22l2 2"/><path d="M8 17h2M14 17h2M20 17h2" stroke-width="2"/>'),
   keepOrigin: true,
-  multi: [['channel', 'Channel', '#16D8AA'], ['diffuser', 'Diffuser', '#F3F3F0'], ['caps', 'End caps', '#16D8AA'], ['joiner', 'Joiner', '#16D8AA']],
+  multi: [['channel', 'Channel', '#16D8AA'], ['diffuser', 'Diffuser', '#F3F3F0'], ['caps', 'End caps', '#16D8AA'], ['joiner', 'Joiner', '#16D8AA'], ['corner', 'Corner joint', '#16D8AA']],
   params: [n('len', 'Length of each piece', 200, 20, 1000), n('strip', 'LED strip width', 10, 3, 40, 0.5), n('h', 'Channel height', 9.25, 8.25, 40, 0.25), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
     n('wall', 'Wall', 2.2, 1.4, 4, 0.1), n('floor', 'Floor', 1.4, 0.8, 4, 0.1), n('dT', 'Diffuser cover thickness', 1.45, 0.6, 3, 0.05),
     sel('startEnd', 'Start end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('startCap', 'Start cap', 'cable', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
     sel('finishEnd', 'Finish end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('finishCap', 'Finish cap', 'smooth', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
-    int('holes', 'M3 mounting holes', 0, 0, 20), int('joiners', 'Joiners', 1, 0, 10), n('jlen', 'Joiner length', 30, 15, 80, 1), sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], ['separate', 'Separate parts (to print)']]),
-    sel('part', 'This object is the', 'channel', [['channel', 'Channel'], ['diffuser', 'Diffuser'], ['caps', 'End caps'], ['joiner', 'Joiner']])],
+    sel('miterSide', 'Mitred corners turn', 'left', [['left', 'Left (back edge is the inside)'], ['right', 'Right (front edge is the inside)']]),
+    int('holes', 'M3 mounting holes', 0, 0, 20), int('joiners', 'Joiners', 1, 0, 10), int('corners', 'Corner joints', 1, 0, 10), n('jlen', 'Joiner length', 30, 15, 80, 1), sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], ['separate', 'Separate parts (to print)']]),
+    sel('part', 'This object is the', 'channel', [['channel', 'Channel'], ['diffuser', 'Diffuser'], ['caps', 'End caps'], ['joiner', 'Joiner'], ['corner', 'Corner joint']])],
   build: (p, K) => {
     const { W, Wo, ct } = ledDims(p); const sep = p.layout === 'separate'; const M = K.Manifold;
     if (p.part === 'diffuser') {
@@ -374,6 +390,16 @@ gen('ledchannel', {
       const list = Array.from({ length: p.joiners }, (_, i) => (sep ? one.translate([i * (jl + 6) - p.len / 2 + jl / 2, -(2 * Wo + 30 + ct), jw]) : one.translate([p.len / 2 + 0.6, 0, 0])));
       return M.union(list);
     }
+    if (p.part === 'corner') {
+      if (!p.corners) throw new Error('Set Corner joints to 1 or more to make corner joints.');
+      const c = ledCornerJoint(p, K); const right = p.miterSide === 'right';
+      if (sep) { const b = c.boundingBox(); return M.union(Array.from({ length: p.corners }, (_, i) => c.translate([i * (b.max[0] - b.min[0] + 6) - b.min[0] + p.len / 2 + 10, -b.min[1] + Wo + 10, 1.4]))); }
+      // assembled: at a mitred end (the finish end first), where the next channel would turn
+      const at = p.finishEnd === 'miter' ? p.len / 2 - Wo / 2 : p.startEnd === 'miter' ? -(p.len / 2 - Wo / 2) : p.len / 2 + Wo / 2 + 0.6;
+      let cc = p.finishEnd === 'miter' || p.startEnd !== 'miter' ? c : c.mirror([1, 0, 0]);
+      if (right) cc = cc.mirror([0, 1, 0]);
+      return cc.translate([at, 0, 0]);
+    }
     let ch = along(ledProfile(p, K), p.len, K);
     ch = mitreCut(ch, p, K, Wo);
     if (p.holes > 0) {
@@ -383,7 +409,102 @@ gen('ledchannel', {
     }
     return ch;
   },
-  note: 'Print the channel on its back, the diffuser cover-down in translucent filament and the caps plate-down. Push the diffuser straight down until both legs click. A joiner slides over two channel ends.',
+  note: 'Print the channel on its back, the diffuser cover-down in translucent filament and the caps plate-down. Push the diffuser straight down until both legs click. A joiner slides over two straight channel ends. For a corner, set the ends that meet to 45° mitre (the inside edge is shorter) and slide a corner joint over both. LED strips can’t bend sideways, so cut the strip at the corner and join it with a corner connector or two short wires.',
+});
+
+// ------------------------------------------------------------------ Hexagon wall lights
+// A honeycomb of LED channel bars joined by 2-way and 3-way connectors. The bars use the LED channel profile
+// and its snap-in diffuser; each connector has sleeves the bar ends slide into and a hollow hub for the wires.
+const HEX_LAYOUTS = {
+  single: [[0, 0]], three: [[0, 0], [1, 0], [0, 1]],
+  flower: [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]],
+  wall: [[-2, 0], [-1, 0], [0, 0], [1, 0], [-1, 1], [-1, -1], [1, -1]],
+};
+function hexGrid(p) {
+  let cells = HEX_LAYOUTS[p.layoutHex];
+  if (p.layoutHex === 'grid') { cells = []; for (let r = 0; r < p.rows; r++) for (let q = 0; q < p.cols; q++) cells.push([q - Math.floor(r / 2), r]); }
+  const S = p.side, verts = new Map(), edges = new Map();
+  const key = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
+  const vert = (x, y) => { const k = key(x, y); if (!verts.has(k)) verts.set(k, { x, y, dirs: [] }); return k; };
+  for (const [q, r] of cells) {
+    const cx = S * Math.sqrt(3) * (q + r / 2), cy = S * 1.5 * r;
+    const ks = Array.from({ length: 6 }, (_, i) => { const a = (30 + 60 * i) * Math.PI / 180; return vert(cx + S * Math.cos(a), cy + S * Math.sin(a)); });
+    for (let i = 0; i < 6; i++) { const a = ks[i], b = ks[(i + 1) % 6]; const ek = a < b ? `${a}|${b}` : `${b}|${a}`; if (!edges.has(ek)) edges.set(ek, [a, b]); }
+  }
+  for (const [a, b] of edges.values()) {
+    const A = verts.get(a), B = verts.get(b);
+    A.dirs.push(Math.round(Math.atan2(B.y - A.y, B.x - A.x) * 180 / Math.PI)); B.dirs.push(Math.round(Math.atan2(A.y - B.y, A.x - B.x) * 180 / Math.PI));
+  }
+  // centre the whole wall on the origin
+  const vs = [...verts.values()]; const mx = (Math.min(...vs.map((v) => v.x)) + Math.max(...vs.map((v) => v.x))) / 2, my = (Math.min(...vs.map((v) => v.y)) + Math.max(...vs.map((v) => v.y))) / 2;
+  for (const v of vs) { v.x -= mx; v.y -= my; }
+  const W = Math.max(...vs.map((v) => v.x)) * 2, H = Math.max(...vs.map((v) => v.y)) * 2;
+  return { cells, verts: vs, edges: [...edges.values()].map(([a, b]) => [verts.get(a), verts.get(b)]), W, H };
+}
+function hexDims(p) {
+  const { W, Wo, g0, ct } = ledDims(p);
+  const g = 0.2, jw = 1.4, iW = Wo + 2 * g, oW = iW + 2 * jw, jh = p.h - 0.6;
+  const R = Math.max(0.6 * oW, W / 2 + 4); // distance from the vertex to where a bar starts
+  const bar = p.side - 2 * R - 0.4;
+  return { W, Wo, g0, ct, g, jw, iW, oW, jh, R, bar };
+}
+function hexConnector(p, K, dirs) {
+  const M = K.Manifold; const { W, g0, ct, jw, iW, oW, jh, R } = hexDims(p);
+  const top = p.h + ct, sl = p.sleeve;
+  const inner = K.CrossSection.ofPolygons([[[-iW / 2 + 0.4, -0.01], [iW / 2 - 0.4, -0.01], [iW / 2, 0.4], [iW / 2, jh + 1], [-iW / 2, jh + 1], [-iW / 2, 0.4]]]);
+  const prof = K.CrossSection.square([oW, jh + jw]).translate([-oW / 2, -jw]).subtract(inner);
+  const sleeve = along(prof, sl, K).translate([R + sl / 2, 0, 0]);
+  const face = M.cube([0.01, oW, top + jw]).translate([R - 0.01, -oW / 2, -jw]);
+  const hub = M.hull(dirs.map((a) => face.rotate([0, 0, a])));
+  const tunnel = M.cube([R + 0.5, W, g0 - p.floor]).translate([0, -W / 2, p.floor]);
+  let c = M.union([hub, ...dirs.map((a) => sleeve.rotate([0, 0, a]))]);
+  c = c.subtract(M.union([M.cylinder(g0 - p.floor, W / 2, W / 2, 32).translate([0, 0, p.floor]), ...dirs.map((a) => tunnel.rotate([0, 0, a]))]));
+  // countersunk M3 screw through the middle of the hub, head flush with the top
+  c = c.subtract(M.cylinder(top + jw + 2, 1.7, 1.7, 24).translate([0, 0, -jw - 1])).subtract(M.cylinder(1.6, 1.7, 3.3, 24).translate([0, 0, top - 1.59]));
+  if (p.backHole) c = c.subtract(M.cylinder(jw + p.floor + 1, 3, 3, 24).translate([0, 0, -jw - 0.5]).translate([R * 0.55 * Math.cos(dirs[0] * Math.PI / 180), R * 0.55 * Math.sin(dirs[0] * Math.PI / 180), 0]));
+  return c;
+}
+function hexCounts(p) {
+  try {
+    const gr = hexGrid(p); const d = hexDims(p);
+    const n3 = gr.verts.filter((v) => v.dirs.length === 3).length, n2 = gr.verts.filter((v) => v.dirs.length === 2).length;
+    return { gr, d, n3, n2, bars: gr.edges.length };
+  } catch { return null; }
+}
+gen('hexlight', {
+  label: 'Hexagon wall lights', blurb: 'Honeycomb LED wall light: channel bars with snap-in diffusers, joined by 2-way and 3-way connectors.',
+  icon: gicon('<path d="M10 4l6 3.5v7L10 18l-6-3.5v-7z"/><path d="M22 11l6 3.5v7L22 25l-6-3.5v-7z"/><path d="M10 18v7l6 3.5"/>'),
+  keepOrigin: true,
+  multi: [['bar', 'Bars', '#2B2F36'], ['diffuser', 'Diffusers', '#F3F3F0'], ['joint3', '3-way connectors', '#2B2F36'], ['joint2', '2-way connectors', '#2B2F36']],
+  params: [sel('layoutHex', 'Layout', 'wall', [['single', 'One hexagon'], ['three', 'Three'], ['flower', 'Seven (flower)'], ['wall', 'Seven in a row (wall)'], ['grid', 'Grid (rows × columns)']]),
+    int('rows', 'Rows (grid)', 2, 1, 12), int('cols', 'Columns (grid)', 3, 1, 12),
+    n('side', 'Hexagon side (vertex to vertex)', 150, 60, 800, 1), n('strip', 'LED strip width', 10, 3, 30, 0.5), n('h', 'Channel height', 9.25, 8.25, 30, 0.25),
+    n('wall', 'Wall', 2.2, 1.4, 4, 0.1), n('floor', 'Floor', 1.4, 0.8, 4, 0.1), n('dT', 'Diffuser cover thickness', 1.45, 0.6, 3, 0.05), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
+    n('sleeve', 'Connector sleeve length', 15, 6, 40, 1), bool('backHole', 'Cable hole through the back of the connectors', false),
+    sel('layout', 'Show', 'assembled', [['assembled', 'Whole wall (assembled)'], ['separate', 'One of each part (to print)']]),
+    sel('part', 'This object is the', 'bar', [['bar', 'Bars'], ['diffuser', 'Diffusers'], ['joint3', '3-way connectors'], ['joint2', '2-way connectors']])],
+  build: (p, K) => {
+    const M = K.Manifold; const d = hexDims(p);
+    if (d.bar < 20) throw new Error(`Hexagons are too small for this channel. Make the side at least ${Math.ceil(2 * d.R + 21)} mm.`);
+    const gr = hexGrid(p); const sep = p.layout === 'separate';
+    if (p.part === 'bar' || p.part === 'diffuser') {
+      const piece = p.part === 'bar' ? along(ledProfile(p, K), d.bar, K) : along(ledDiffuserProfile(p, K), d.bar - 0.3, K);
+      if (sep) return p.part === 'bar' ? piece : (() => { const f = piece.rotate([180, 0, 0]); const b = f.boundingBox(); return f.translate([0, d.oW + 10 - b.min[1], -b.min[2]]); })();
+      return M.union(gr.edges.map(([a, b]) => piece.rotate([0, 0, Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI]).translate([(a.x + b.x) / 2, (a.y + b.y) / 2, 0])));
+    }
+    const want = p.part === 'joint3' ? 3 : 2;
+    const vs = gr.verts.filter((v) => v.dirs.length === want);
+    if (!vs.length) throw new Error(`This layout has no ${want}-way connectors.`);
+    if (sep) { const c = hexConnector(p, K, want === 3 ? [90, 210, 330] : [30, 150]); return c.translate([want === 3 ? -2 * d.R - p.sleeve - 15 : 2 * d.R + p.sleeve + 15, -(d.oW + 2 * d.R + p.sleeve + 25), d.jw]); }
+    const cache = new Map();
+    return M.union(vs.map((v) => { const k = v.dirs.slice().sort((x, y) => x - y).join(','); if (!cache.has(k)) cache.set(k, hexConnector(p, K, v.dirs)); return cache.get(k).translate([v.x, v.y, 0]); }));
+  },
+  note: (p) => {
+    const c = hexCounts(p); if (!c) return '';
+    const strip = (c.bars * (c.d.bar + 2 * c.d.R) / 1000).toFixed(1);
+    return `To print for this layout: ${c.bars} bars and ${c.bars} diffusers (${c.d.bar.toFixed(1)} mm each), ${c.n3} three-way and ${c.n2} two-way connectors. The wall is about ${Math.round(c.gr.W)} × ${Math.round(c.gr.H)} mm and needs about ${strip} m of LED strip. ` +
+      'Print bars on their back, diffusers cover-down in translucent filament, connectors flat. Cut the strip to one piece per bar and join neighbours with short wires through the connector hubs (strips can’t bend sideways). Screw each connector to the wall through its centre. Use “One of each part” to print, then make copies with Make many.';
+  },
 });
 
 // ------------------------------------------------------------------ Gridfinity baseplate sized to a drawer

@@ -1,4 +1,4 @@
-export const VERSION = '11';
+export const VERSION = '12';
 import { saveCurrent, loadCurrent, snapshot, listVersions, loadVersion } from './storage.js';
 import { initKernel, K, worldManifold, localGeometry, free, kindDef, setRepairHandler } from './kernel.js';
 import { Scene, makeShape, uid, nextColor, cloneObj } from './scene.js';
