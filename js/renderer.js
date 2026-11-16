@@ -36,9 +36,12 @@ void main(){
   }
   o = vec4(col, a);
 }`;
+// Edges are nudged a tiny, fixed distance toward the camera (uBias mm, scaled with zoom) so they win the depth test
+// against their own faces. The old clip-space bias was worth ~10 mm of real depth at normal zoom, so edges of holes
+// and back faces showed through thin parts. X-ray (renderer.xray) draws hidden edges on purpose, only when asked.
 const LINE_VS = `#version 300 es
-in vec3 aPos; uniform mat4 uModel, uVP; out vec3 vW;
-void main(){ vec4 w=uModel*vec4(aPos,1.0); vW=w.xyz; gl_Position=uVP*w; gl_Position.z -= 0.0004*gl_Position.w; }`;
+in vec3 aPos; uniform mat4 uModel, uVP; uniform vec3 uEyeL; uniform float uBias; out vec3 vW;
+void main(){ vec4 w=uModel*vec4(aPos,1.0); vW=w.xyz; vec3 tw = normalize(uEyeL - w.xyz); gl_Position=uVP*vec4(w.xyz + tw*max(uBias,0.0), 1.0); }`;
 const LINE_FS = `#version 300 es
 precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; uniform vec4 uSec; out vec4 o;
 void main(){ if (vW.z > uClip + 0.01) discard; if (dot(vW, uSec.xyz) > uSec.w + 0.01) discard; o=uColor; }`;
@@ -125,7 +128,7 @@ export class Renderer {
     this.quad = this._buf(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]));
     this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66], plate: 'studio' };
     this.bed = { w: 256, d: 256, h: 250, round: false, origin: 'centre' };
-    this.clipZ = 1e9; this.section = null; /* { n: [x,y,z], d } */ this.overhang = 0; this.gridStep = 10;
+    this.clipZ = 1e9; this.xray = false; this.section = null; /* { n: [x,y,z], d } */ this.overhang = 0; this.gridStep = 10;
   }
   _buf(data, target) { const gl = this.gl; const b = gl.createBuffer(); gl.bindBuffer(target || gl.ARRAY_BUFFER, b); gl.bufferData(target || gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); return b; }
   /** Free the GPU buffers of render data that won't be drawn again (previews, highlights). */
@@ -181,15 +184,23 @@ export class Renderer {
 
     // lines: edges, bed volume, extras
     const L = this.line; gl.useProgram(L.p); gl.uniformMatrix4fv(L.u.uVP, false, vp); gl.uniform1f(L.u.uClip, this.clipZ); gl.uniform4fv(L.u.uSec, sec);
+    // bias: 0.1 % of the viewing distance (0.3 mm at the default zoom), never more than 0.5 mm
+    gl.uniform3fv(L.u.uEyeL, M.eye); gl.uniform1f(L.u.uBias, Math.min(0.5, Math.max(0.005, this.cam.dist * 0.001)));
     const lineCol = t.dark ? [1, 1, 1, 0.22] : [0.05, 0.08, 0.12, 0.35];
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    for (const it of items) {
-      const b = this.buffersFor(it.rd); if (!b.edges || it.hole) continue;
-      gl.uniformMatrix4fv(L.u.uModel, false, new Float32Array(it.model));
-      gl.uniform4fv(L.u.uColor, it.selected ? [...t.accent, 1] : lineCol);
-      gl.bindBuffer(gl.ARRAY_BUFFER, b.edges); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-      gl.drawArrays(gl.LINES, 0, b.ecount);
-    }
+    const edgePass = (hidden) => {
+      for (const it of items) {
+        const b = this.buffersFor(it.rd); if (!b.edges || it.hole) continue;
+        gl.uniformMatrix4fv(L.u.uModel, false, new Float32Array(it.model));
+        const col = it.selected ? [...t.accent, 1] : lineCol;
+        gl.uniform4fv(L.u.uColor, hidden ? [col[0], col[1], col[2], col[3] * 0.45] : col);
+        gl.bindBuffer(gl.ARRAY_BUFFER, b.edges); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.LINES, 0, b.ecount);
+      }
+    };
+    // X-ray (off unless switched on): hidden edges first, faint and ignoring depth, then the visible ones on top
+    if (this.xray) { gl.disable(gl.DEPTH_TEST); gl.depthMask(false); edgePass(true); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); }
+    edgePass(false);
     const I = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
     gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9); gl.uniform4fv(L.u.uSec, [0, 0, 1, 1e9]);
     const bedLines = this._bedLines();
@@ -229,8 +240,9 @@ export class Renderer {
     gl.disable(gl.BLEND);
   }
   _bedLines() {
-    const b = this.bed; const key = `${b.w},${b.d},${b.h},${b.round},${this.theme.dark}`;
+    const b = this.bed; const key = `${b.w},${b.d},${b.h},${b.round},${b.none},${this.theme.dark}`;
     if (this._bedKey === key) return this._bedL;
+    if (b.none) { this._bedKey = key; this._bedL = { data: new Float32Array(0), color: [0, 0, 0, 0] }; return this._bedL; } // no plate: no build-volume box
     const d = []; const push = (a, c) => d.push(...a, ...c);
     const corners = (z) => b.round ? null : [[-b.w / 2, -b.d / 2, z], [b.w / 2, -b.d / 2, z], [b.w / 2, b.d / 2, z], [-b.w / 2, b.d / 2, z]];
     if (b.round) {

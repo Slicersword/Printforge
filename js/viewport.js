@@ -114,7 +114,7 @@ export class Viewport {
       const e = s.geometry(o); if (!e) continue;
       const m = s.matrix(o);
       const it = { obj: o, rd: e.render, model: m, normalMat: normalMatrix(m), rgb: hex(o.hole ? '#9AA3AD' : o.color), hole: o.hole, selected: s.selection.has(o.id), flip: o.scale[0] * o.scale[1] * o.scale[2] < 0, centre: transformPoint(m, [0, 0, 0]) };
-      if (pv?.ghost?.has(o.id)) { const role = pv.ghost.get(o.id); it.selected = false; if (role === 'B') { it.hole = true; } else { it.alpha = 0.16; } }
+      if (pv?.ghost?.has(o.id)) { const role = pv.ghost.get(o.id); if (role === 'H') continue; /* replaced by the preview */ it.selected = false; if (role === 'B') { it.hole = true; } else { it.alpha = 0.16; } }
       out.push(it);
     }
     return out;
@@ -227,9 +227,14 @@ export class Viewport {
   _measurePoint(x, y) { const hit = this.pick(x, y); return hit ? hit.point : this.planeHit(x, y, 0); }
 
   // ------------------------------------------------------------ picking
-  pick(x, y) {
+  /** Ray-pick one object even if the view is showing something else in its place (a tool preview). */
+  pickObject(obj, x, y) {
+    const e = this.scene.geometry(obj); if (!e) return null; const m = this.scene.matrix(obj);
+    return this.pick(x, y, [{ obj, rd: e.render || renderData(e), model: m, hole: false }]);
+  }
+  pick(x, y, list) {
     const { o, d } = this.r.ray(x, y); let best = null;
-    for (const it of this._items || this.items()) {
+    for (const it of list || this._items || this.items()) {
       if (!it.obj) continue;
       const inv = this.scene.inverse(it.obj);
       const lo = transformPoint(inv, o), ld = v3.sub(transformPoint(inv, v3.add(o, d)), lo);
@@ -271,6 +276,7 @@ export class Viewport {
     const x = e.offsetX, y = e.offsetY; const btn = e.pointerType === 'touch' ? 0 : e.button;
     this.state = { x0: x, y0: y, lx: x, ly: y, moved: false };
     if (this.measure && btn === 0) { this.state.mode = 'orbit'; this.state.measureClick = true; return; }
+    if (this.mode === 'design' && this.edgePick && btn === 0) { this.state.mode = 'orbit'; this.state.edgeClick = true; return; } // click picks an edge, drag orbits
     if (btn === 1 || (btn === 2 && e.shiftKey)) { this.state.mode = 'pan'; return; }
     if (btn === 2) { this.state.mode = 'orbit'; this.state.right = true; return; }
     if (this.mode === 'design' && this.facePick && btn === 0) {
@@ -303,6 +309,7 @@ export class Viewport {
     if (this.measure && this.measure.a && !this.measure.b) { this.measure.hover = this._measurePoint(e.offsetX, e.offsetY); this.redraw(); }
     if (!st) {
       // hover-highlight gizmo axes when idle
+      if (this.mode === 'design' && this.edgePick) { const now = performance.now(); if (now - (this._lastHover || 0) > 30) { this._lastHover = now; this.edgePick.hover(e.offsetX, e.offsetY); } return; }
       if (this.mode === 'design' && (this.tool === 'flatten' || this.facePick)) { const now = performance.now(); if (now - (this._lastHover || 0) > 30) { this._lastHover = now; this._hoverFace(e.offsetX, e.offsetY); } return; }
       if (this.mode === 'design') { const gh = this._gizmoHit(e.offsetX, e.offsetY); const a = gh ? gh.axis : null; if (a !== this._hoverAxis) { this._hoverAxis = a; this.canvas.style.cursor = a != null ? 'pointer' : ''; this.redraw(); } }
       return;
@@ -336,6 +343,7 @@ export class Viewport {
     this.pointers.delete(e.pointerId);
     const st = this.state; if (!st) return;
     if (st.mode === 'touch2') { if (this.pointers.size === 0) this.state = null; return; }
+    if (st.edgeClick && !st.moved) { this.state = null; this.edgePick?.click(st.x0, st.y0, e.shiftKey || e.ctrlKey || e.metaKey); return; }
     if (st.measureClick && !st.moved) {
       const p = this._measurePoint(st.x0, st.y0); const ms = this.measure;
       if (p) { if (!ms.a || ms.b) { ms.a = p; ms.b = null; } else ms.b = p; }
@@ -529,7 +537,7 @@ export class Viewport {
   }
   fit(keep = true) {
     const s = this.scene; const box = s.selection.size ? s.selectionBox() : s.selectionBox(s.objects.filter((o) => o.visible !== false));
-    const b = this.r.bed;
+    const b = this.r.bed.none ? { w: 200, d: 200 } : this.r.bed; // no plate: frame a 200 mm area when the scene is empty
     this.r.frame(box || { min: [-b.w / 2, -b.d / 2, 0], max: [b.w / 2, b.d / 2, 30] }, keep); this.redraw();
   }
 }

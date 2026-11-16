@@ -6,6 +6,7 @@ import { SHAPES, defaults } from './shapes.js';
 import { Viewport } from './viewport.js';
 import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row, IS_MAC, keyName } from './ui.js';
 import { PRINTERS, printerById } from './printers.js';
+const UNLIMITED = 20000; // mm: the work area with no plate (20 m each way, past the far edge of the view)
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
 import { eulerMatrix, transformDir, fmt, eulerFromMatrix, mul, transformPoint } from './math.js';
 import { hex, PLATES } from './renderer.js';
@@ -31,6 +32,8 @@ class App {
     for (const p of this.plugins) p(this);
     this._bindChrome();
     this.scene.on('change', () => this._changed());
+    // undo, redo, open and restore can change the plate: keep the view's plate in step with the settings
+    this.scene.on('change', () => { const b = this.view.r.bed, none = this.noPlate(), pb = this.printerBed(); if (!!b.none !== none || (!none && (b.w !== pb.w || b.d !== pb.d || b.h !== pb.h))) this.applyPrinter(); });
     this.scene.on('select', () => this._selChanged());
     this.scene.on('toast', (m) => this.toast(m));
     this.on('measure', (on) => { document.getElementById('measureBtn').classList.toggle('on', on); if (on) this.toast('Click two points to measure. Esc to stop.'); });
@@ -39,7 +42,7 @@ class App {
     this.applyPrinter();
     // restore the last workspace (IndexedDB, or the older localStorage copy)
     const saved = await loadCurrent();
-    if (saved) { try { this.scene.load(saved); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { this.toast('Your last design couldn’t be restored. Earlier versions are in Help → Recover.', 5000); } }
+    if (saved) { try { this.scene.load(saved); this.applyPrinter(); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { this.toast('Your last design couldn’t be restored. Earlier versions are in Help → Recover.', 5000); } }
     this._saveState('saved');
     this._changed(); this._selChanged();
     this.view.fit();
@@ -96,7 +99,8 @@ class App {
   renderStatus() {
     const s = this.scene; const el = document.getElementById('status'); const sel = s.selected();
     const box = sel.length ? s.selectionBox(sel) : null; const p = printerById(s.settings.printer);
-    const items = [h('span', {}, h('b', {}, `${p.vendor} ${p.model}`), ` ${p.w}×${p.d}×${p.h} mm`)];
+    const pb = this.printerBed();
+    const items = [this.noPlate() ? h('span', {}, h('b', {}, 'No plate'), ` unlimited work area · prints on ${p.vendor} ${p.model}`) : h('span', {}, h('b', {}, `${p.vendor} ${p.model}`), ` ${pb.w}×${pb.d}×${pb.h} mm`)];
     if (this.mode === 'preview') { items.push(h('span', {}, this.gcode?.data ? `G-code: ${this.gcode.name}` : 'No G-code open')); el.replaceChildren(...items); return; }
     if (box) items.push(h('span', {}, 'Selection ', h('b', {}, `${fmt(box.max[0] - box.min[0], 1)} × ${fmt(box.max[1] - box.min[1], 1)} × ${fmt(box.max[2] - box.min[2], 1)} mm`)));
     const errs = s.objects.filter((o) => o._error).length; if (errs) items.push(h('span', { class: 'warn' }, `${errs} shape(s) need attention`));
@@ -395,17 +399,24 @@ class App {
     if (!added.length) return [];
     s.edit(label, () => { for (const o of added) { s.objects.push(o); } s.dropToPlate(added, true); s.selection = new Set(added.map((o) => o.id)); });
     // Centre the new parts on the plate if they came in far away.
-    const box = s.selectionBox(added); const b = this.view.r.bed;
+    const box = s.selectionBox(added); const b = this.printerBed();
     if (box && (Math.abs(box.min[0]) > b.w / 2 || Math.abs(box.min[1]) > b.d / 2)) { const c = box.min.map((v, i) => (v + box.max[i]) / 2); added.forEach((o) => { o.pos = [o.pos[0] - c[0], o.pos[1] - c[1], o.pos[2]]; }); }
     s.emit('select'); this._changed(); this.view.fit(); if (label === 'import') this.toast(`Imported ${added.length} object${added.length > 1 ? 's' : ''}`);
     return added;
   }
 
   // ------------------------------------------------------------ settings, theme, help
-  applyPrinter() {
+  /** The chosen printer's build volume, whatever the Design page shows. */
+  printerBed() {
     const s = this.scene.settings; const p = printerById(s.printer);
-    const w = s.printer === 'custom' ? (s.customW || 200) : p.w, d = s.printer === 'custom' ? (s.customD || 200) : p.d, hh = s.printer === 'custom' ? (s.customH || 200) : p.h;
-    Object.assign(this.view.r.bed, { w, d, h: hh, round: false }); this.view.r._bedKey = null; this.view.redraw(); this.renderStatus?.();
+    return { w: s.printer === 'custom' ? (s.customW || 200) : p.w, d: s.printer === 'custom' ? (s.customD || 200) : p.d, h: s.printer === 'custom' ? (s.customH || 200) : p.h };
+  }
+  /** Design with no plate: the work area has no edges. Prepare to print and the G-code view always use the printer. */
+  noPlate() { return this.mode === 'design' && this.scene.settings.designPlate === 'none'; }
+  applyPrinter() {
+    const b = this.printerBed(); const none = this.noPlate();
+    Object.assign(this.view.r.bed, none ? { w: UNLIMITED, d: UNLIMITED, h: UNLIMITED, round: false, none: true } : { ...b, round: false, none: false });
+    this.view.r._bedKey = null; this.view.redraw(); this.renderStatus?.();
   }
   _initAppearance() {
     let a = {}; try { a = JSON.parse(store.get('printforge.appearance') || '{}') || {}; } catch { a = {}; }
@@ -440,9 +451,19 @@ class App {
   closeMenus() { document.querySelectorAll('.dropdown-menu').forEach((m) => { m.hidden = true; }); }
   platePanel() {
     const s = this.scene; const st = s.settings;
-    const printerSel = h('select', { 'aria-label': 'Printer', onchange: (e) => { s.edit('printer', () => { st.printer = e.target.value; }); this.applyPrinter(); this.view.fit(); } },
-      ...[...new Set(PRINTERS.map((p) => p.vendor))].map((v) => h('optgroup', { label: v }, ...PRINTERS.filter((p) => p.vendor === v).map((p) => h('option', { value: p.id, selected: p.id === st.printer }, `${p.model}${p.id === 'custom' ? '' : `  (${p.w}×${p.d}×${p.h})`}`)))));
-    const out = [h('h3', {}, 'Plate'), h('fieldset', {}, h('legend', {}, 'Printer'), printerSel)];
+    const none = st.designPlate === 'none';
+    const printerOpts = (selected) => [...new Set(PRINTERS.map((p) => p.vendor))].map((v) => h('optgroup', { label: v }, ...PRINTERS.filter((p) => p.vendor === v).map((p) => h('option', { value: p.id, selected: selected && p.id === st.printer }, `${p.model}${p.id === 'custom' ? '' : `  (${p.w}×${p.d}×${p.h})`}`))));
+    const plateSel = h('select', { 'aria-label': 'Print plate', onchange: (e) => {
+      const v = e.target.value;
+      s.edit('plate', () => { if (v === 'none') st.designPlate = 'none'; else { st.designPlate = 'printer'; st.printer = v; } });
+      this.applyPrinter(); this.view.fit(); this.refresh();
+    } }, h('option', { value: 'none', selected: none }, 'None (no limit)'), ...printerOpts(!none));
+    const out = [h('h3', {}, 'Plate'), h('fieldset', {}, h('legend', {}, 'Print plate'), plateSel,
+      none ? h('p', { class: 'note' }, 'No plate: the design area has no limit, so you can lay out whole walls, rooms or big assemblies at full size. Pick a plate again to see what fits on one print.') : null)];
+    if (none) {
+      const prepSel = h('select', { 'aria-label': 'Printer for Prepare to print', onchange: (e) => { s.edit('printer', () => { st.printer = e.target.value; }); this.applyPrinter(); this.refresh(); } }, ...printerOpts(true));
+      out.push(h('fieldset', {}, h('legend', {}, 'Printer for Prepare to print'), prepSel, h('p', { class: 'note' }, 'Prepare to print, the G-code view and “Fit my build plate” in generators use this printer.')));
+    }
     if (st.printer === 'custom') out.push(h('fieldset', {}, h('legend', {}, 'Build volume (mm)'),
       ...['W', 'D', 'H'].map((l, i) => row(['Width', 'Depth', 'Height'][i], numField(st[`custom${l}`] || 200, (v) => { s.edit('build volume', () => { st[`custom${l}`] = v; }); this.applyPrinter(); }, { min: 20, max: 2000 })))));
     out.push(h('fieldset', {}, h('legend', {}, 'Snap when dragging'),
@@ -458,7 +479,7 @@ class App {
       ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90° on the plate', 'Shift+R'], ['Drop to plate', 'D'],
       ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
       ['Search every tool', 'Ctrl+K'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E'],
-      ['Section view', 'X'], ['Focus on the model', '\\'], ['Hide library / properties', '[ / ]'], ['Actions menu', 'Right-click · Shift+F10']];
+      ['Fillet or chamfer edges', 'E'], ['Section view', 'X'], ['Focus on the model', '\\'], ['Hide library / properties', '[ / ]'], ['Actions menu', 'Right-click · Shift+F10']];
     const d = this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, keyName(b))))),
       h('p', { class: 'note', style: { marginTop: '14px' } }, h('b', {}, 'Move (M): '), 'drag a coloured arrow to move along that axis, or drag the part to slide it on the plate. Snaps to the grid; Shift snaps to 10 mm; Ctrl moves freely.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Rotate (R): '), 'drag a coloured ring to turn around X, Y or Z. Turns in whole degrees; Shift snaps to 15°.'),
@@ -478,7 +499,7 @@ class App {
   }
   closeDrawers() { document.getElementById('app').classList.remove('show-left', 'show-right'); }
   setMode(m) {
-    this.mode = m; this.view.mode = m;
+    this.mode = m; this.view.mode = m; if (this.view?.r) this.applyPrinter();
     document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === m)));
     document.getElementById('layerbar').hidden = m !== 'prepare' || !this.prepPanel;
     this._updateToolbar();
@@ -539,7 +560,7 @@ class App {
     if (mod) return;
     const sel = s.selected();
     if (k === 'delete' || k === 'backspace') return go(() => this.cmd('delete'));
-    if (k === 'escape') return go(() => { if (this.view.measure) this.view.setMeasure(false); else if (this.boolTool) this.closeBoolean(); else if (this.view.tool === 'flatten') this.setTool('move'); else s.clearSelection(); });
+    if (k === 'escape') return go(() => { if (this.view.measure) this.view.setMeasure(false); else if (this.filletTool) this.closeFillet(); else if (this.boolTool) this.closeBoolean(); else if (this.view.tool === 'flatten') this.setTool('move'); else s.clearSelection(); });
     // Tool keys follow Bambu Studio: M move, R rotate, S scale, F lay on face, C cut, B boolean; U measure, Z fit.
     if (k === 'm') return go(() => this.setTool('move'));
     if (k === 'r' && e.shiftKey) return go(() => this.cmd('rotZ'));
@@ -547,6 +568,7 @@ class App {
     if (k === 's') return go(() => this.setTool('scale'));
     if (k === 'f') return go(() => this.setTool('flatten'));
     if (k === 'b') return go(() => this.openBoolean());
+    if (k === 'e') return go(() => this.openFillet?.());
     if (k === 'c') return go(() => this.openCut());
     if (k === 'u') return go(() => this.view.setMeasure(!this.view.measure));
     if (k === 'z') return go(() => this.view.fit());

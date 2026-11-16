@@ -1,6 +1,7 @@
 // Transform tool bar (Move, Rotate, Scale, Lay on face, Cut, Boolean, Measure) and the Mesh Boolean tool.
 // Modelled on Bambu Studio's gizmo bar and its Mesh Boolean gizmo, and on PaliCAD's union / subtract / intersect.
-import { h } from './ui.js';
+import { h, numField, row } from './ui.js';
+import { findEdges, filletEdges, edgeLabel } from './fillet.js';
 import { K, worldManifold, renderData, free } from './kernel.js';
 import { hex } from './renderer.js';
 import { eulerMatrix, eulerFromMatrix, mul, fmt } from './math.js';
@@ -13,6 +14,7 @@ const I = {
   cut: '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="1.5"/><path d="M2 12h20" stroke-dasharray="2.5 2"/></svg>',
   boolean: '<svg viewBox="0 0 24 24"><circle cx="9.5" cy="12" r="6"/><circle cx="14.5" cy="12" r="6"/><path d="M12 7.2a6 6 0 0 0 0 9.6 6 6 0 0 0 0-9.6z" fill="currentColor" stroke="none"/></svg>',
   measure: '<svg viewBox="0 0 24 24"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg>',
+  fillet: '<svg viewBox="0 0 24 24"><path d="M4 20V10a6 6 0 0 1 6-6h10"/><path d="M4 20h16V4" stroke-dasharray="2 2"/></svg>',
 };
 function xyzOnly(m) { const np = m.numProp, vp = m.vertProperties; if (np === 3) return new Float32Array(vp); const n = vp.length / np, out = new Float32Array(n * 3); for (let i = 0; i < n; i++) { out[i * 3] = vp[i * np]; out[i * 3 + 1] = vp[i * np + 1]; out[i * 3 + 2] = vp[i * np + 2]; } return out; }
 const VENN = {
@@ -43,6 +45,7 @@ export function rotBetween(a, b) {
 }
 
 export function install(app) {
+  const add0 = (label, run, keys) => app.addAction({ label, group: 'Edit', keys, run });
   // ------------------------------------------------------------ tool bar
   const stage = document.getElementById('stage');
   const tools = [
@@ -56,6 +59,7 @@ export function install(app) {
     h('span', { class: 'sep' }),
     h('button', { 'data-act': 'cut', title: 'Cut in two (C)', 'aria-label': 'Cut (C)', html: `${I.cut}<span>Cut</span><kbd>C</kbd>`, onclick: () => app.openCut() }),
     h('button', { 'data-act': 'boolean', title: 'Mesh boolean: union, subtract or intersect parts (B)', 'aria-label': 'Boolean (B)', html: `${I.boolean}<span>Boolean</span><kbd>B</kbd>`, onclick: () => app.openBoolean() }),
+    h('button', { 'data-act': 'fillet', title: 'Fillet or chamfer edges: click the edges to round (E)', 'aria-label': 'Fillet edges (E)', html: `${I.fillet}<span>Fillet</span><kbd>E</kbd>`, onclick: () => app.openFillet() }),
     h('button', { 'data-act': 'measure', title: 'Measure between two points (U)', 'aria-label': 'Measure (U)', html: `${I.measure}<span>Measure</span><kbd>U</kbd>`, onclick: () => app.view.setMeasure(!app.view.measure) }));
   stage.appendChild(bar);
   const sync = () => {
@@ -157,12 +161,29 @@ export function install(app) {
   app.on('change', () => { if (sec.on) applySec(); });
   bar.insertBefore(h('button', { 'data-act': 'section', title: 'Section view: cut through the model on X, Y or Z (X)', 'aria-label': 'Section view (X)', html: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M3 14l18-6" stroke-dasharray="2.5 2"/></svg><span>Section</span><kbd>X</kbd>', onclick: () => app.toggleSection() }), bar.querySelector('[data-act="measure"]'));
 
+  // ------------------------------------------------------------ X-ray: hidden edges only when asked for
+  app.toggleXray = (on = !app.view.r.xray) => {
+    app.view.r.xray = !!on; bar.querySelector('[data-act="xray"]')?.classList.toggle('on', app.view.r.xray);
+    bar.querySelector('[data-act="xray"]')?.setAttribute('aria-pressed', String(app.view.r.xray));
+    app.view.redraw(); if (on) app.toast('X-ray: hidden edges show faintly through the parts. Click X-ray again to hide them.');
+  };
+  bar.insertBefore(h('button', { 'data-act': 'xray', 'aria-pressed': 'false', title: 'X-ray: show hidden edges through the parts (off by default)', 'aria-label': 'X-ray', html: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M4 7l8 4 8-4M12 11v10" stroke-dasharray="2 2"/></svg><span>X-ray</span>', onclick: () => app.toggleXray() }), bar.querySelector('[data-act="measure"]'));
+  app.addAction?.({ label: 'X-ray (show hidden edges)', group: 'View', run: () => app.toggleXray() });
+
   // ------------------------------------------------------------ right-click menu
   let menu = null;
   const closeMenu = () => { menu?.remove(); menu = null; };
   document.addEventListener('pointerdown', (e) => { if (menu && !menu.contains(e.target)) closeMenu(); }, true);
   document.addEventListener('keydown', (e) => { if (menu && e.key === 'Escape') { e.stopPropagation(); closeMenu(); } }, true);
   window.addEventListener('blur', closeMenu);
+  // The browser's own right-click menu: Windows fires `contextmenu` after mouse-up, when our menu is already under
+  // the pointer, so blocking it on the canvas alone isn't enough. Block it over the 3D view, its toolbars and our
+  // menus; text fields and the panels keep the browser menu (copy, paste, spelling).
+  document.addEventListener('contextmenu', (e) => {
+    const t = e.target; if (!(t instanceof Element)) return;
+    if (t.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if (menu || t.closest('#stage, .ctx-menu, .dropdown-menu')) e.preventDefault();
+  }, true);
   app.showContextMenu = (x, y, obj) => {
     closeMenu(); const s = app.scene; const sel = s.selected(); const one = sel.length === 1 ? sel[0] : null;
     const item = (label, key, run, opts = {}) => h('button', { role: 'menuitem', class: opts.danger ? 'danger' : '', disabled: !!opts.disabled, onclick: () => { closeMenu(); run(); } }, h('span', {}, label), key ? h('kbd', {}, key) : null);
@@ -172,6 +193,7 @@ export function install(app) {
       h('div', { class: 'cm-title' }, one ? one.name : `${sel.length} parts`),
       item('Centre on the plate', '', centre), item('Drop to the plate', 'D', () => app.cmd('drop')), item('Lay on face', 'F', () => app.setTool('flatten')), item('Turn 90°', 'Shift R', () => app.cmd('rotZ')),
       sep(), item('Duplicate', mod('D'), () => app.cmd('duplicate')), item(one?.hole ? 'Make solid' : 'Make a hole', 'H', () => app.cmd('toggleHole')),
+      one && !one.hole ? item('Fillet edges…', 'E', () => app.openFillet()) : null,
       sel.length > 1 ? item('Group', mod('G'), () => app.cmd('group')) : null, sel.length > 1 ? item('Mesh boolean…', 'B', () => app.openBoolean()) : null,
       one ? item('Cut in two…', 'C', () => app.openCut()) : null, one ? item('Texture…', '', () => app.openTexture?.()) : null,
       app.canMakeMany?.(one || {}) ? item('Make many at once…', '', () => app.makeMany(one)) : null,
@@ -181,7 +203,7 @@ export function install(app) {
       item('Fit everything', 'Z', () => app.view.fit()), item('Select all', mod('A'), () => app.cmd('selectAll'), { disabled: !s.objects.length }),
       item('Auto-arrange the plate', '', () => app.arrange?.(), { disabled: !s.objects.length }), item('Show hidden parts', '', () => s.edit('show all', () => s.objects.forEach((o) => { o.visible = true; })), { disabled: !s.objects.some((o) => o.visible === false) }),
       sep(), item('Add a box', '', () => app.addShape('box')), item('Import a file…', mod('I'), () => app.cmd('import')), item('Search every tool…', mod('K'), () => app.openPalette?.()),
-      sep(), item(sec.on ? 'Turn off section view' : 'Section view', 'X', () => app.toggleSection()), item('Focus on the model', '\\', () => app.toggleFocus()),
+      sep(), item(sec.on ? 'Turn off section view' : 'Section view', 'X', () => app.toggleSection()), item(app.view.r.xray ? 'Turn off X-ray' : 'X-ray (hidden edges)', '', () => app.toggleXray()), item('Focus on the model', '\\', () => app.toggleFocus()),
     ];
     menu = h('div', { class: 'ctx-menu', role: 'menu', 'aria-label': 'Actions' }, ...kids.filter(Boolean));
     document.body.appendChild(menu);
@@ -225,6 +247,7 @@ export function install(app) {
     if (app.mode !== 'design') app.setMode('design');
     const s = app.scene; const sel = s.selected();
     if (app.boolTool) { if (op) { app.boolTool.op = op; schedule(); app.refresh(); } return; }
+    app.closeFillet?.();
     if (app.view.measure) app.view.setMeasure(false);
     app._cut = null; app.view.extraLines = null;
     const roles = new Map(); sel.forEach((o, i) => roles.set(o.id, o.hole ? 'B' : i === 0 ? 'A' : 'B'));
@@ -343,6 +366,146 @@ export function install(app) {
       h('p', { class: 'note' }, 'The result is a single mesh. To keep shapes editable, mark cutters as holes and Group them (Ctrl G) instead.'),
     ];
   }
+
+  // ------------------------------------------------------------ fillet / chamfer edges
+  // State: { id, edges: Set(edge ids), r, type, chain, keep, preview }. The part's sharp edges are found once (in world
+  // coordinates) and found again if the part changes. The view shows the result live; Apply turns it into a mesh.
+  let fl = null; // { key, man, edges, result, error, timer }
+  const ORANGE = [0.98, 0.5, 0.12, 1];
+  const flKey = (o) => JSON.stringify([o.id, o.pos, o.rot, o.scale, o.params, o.meshId, o.children?.length]);
+  function flTarget() { const t = app.filletTool; return t && app.scene.objects.find((o) => o.id === t.id); }
+  function flPrepare() {
+    const o = flTarget(); if (!o) return false; const k = flKey(o);
+    if (fl && fl.key === k) return true;
+    flRelease(true); try { const man = worldManifold(o); fl = { key: k, man, edges: findEdges(man), result: null, error: null }; app.filletTool.edges.clear(); return true; }
+    catch (e) { fl = { key: k, man: null, edges: [], error: `Can’t read this part’s edges: ${e.message}` }; return false; }
+  }
+  function flRelease(all) {
+    if (!fl) return; if (fl.result) { free(fl.result.man); app.view.r.release(fl.result.rd); fl.result = null; }
+    app.view.preview = null; if (all) { free(fl.man); fl = null; }
+  }
+  const segDist2 = (x, y, a, b) => { const dx = b[0] - a[0], dy = b[1] - a[1]; const L = dx * dx + dy * dy; const t = L ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / L)) : 0; return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy)); };
+  const ptSeg3 = (p, a, b) => { const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]]; const L = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2; const t = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1] + (p[2] - a[2]) * ab[2]) / L)) : 0; return Math.hypot(p[0] - a[0] - t * ab[0], p[1] - a[1] - t * ab[1], p[2] - a[2] - t * ab[2]); };
+  /** The edge under the pointer: close on screen, and (when the pointer is on the part) closest to that surface point. */
+  function edgeAt(x, y) {
+    if (!fl?.edges.length) return null; const o = flTarget(); const hit = o && app.view.pickObject(o, x, y);
+    let best = null;
+    for (const f of fl.edges) for (let k = 0; k + 1 < f.pts.length; k++) {
+      const a = app.view.r.project(f.pts[k]), b = app.view.r.project(f.pts[k + 1]); if (!a || !b) continue;
+      const d = segDist2(x, y, a, b); if (d > 12) continue;
+      const score = hit ? ptSeg3(hit.point, f.pts[k], f.pts[k + 1]) : d; // hidden edges are far from the surface you're pointing at
+      if (!best || score < best.score) best = { f, score };
+    }
+    return best?.f || null;
+  }
+  const withChain = (f) => (app.filletTool.chain ? fl.edges.filter((g) => g.chain === f.chain) : [f]);
+  function flLines(hover) {
+    const t = app.filletTool; if (!t || !fl) { app.view.extraLines = null; return; }
+    const segs = (list) => { const d = []; for (const f of list) for (let k = 0; k + 1 < f.pts.length; k++) d.push(...f.pts[k], ...f.pts[k + 1]); return new Float32Array(d); };
+    const sel = fl.edges.filter((f) => t.edges.has(f.id)); const lines = [];
+    if (sel.length) lines.push({ data: segs(sel), color: ORANGE, noDepth: true });
+    if (hover) lines.push({ data: segs(withChain(hover)), color: [...app.view.r.theme.accent, 1], noDepth: true });
+    app.view.extraLines = lines;
+  }
+  function flCompute() {
+    const t = app.filletTool; if (!t || !fl?.man) return; flRelease(false); fl.error = null;
+    const list = fl.edges.filter((f) => t.edges.has(f.id));
+    if (!list.length) { app.view.redraw(); app.refresh(); return; }
+    if (!(t.r > 0)) { fl.error = 'Set a size bigger than 0.'; app.refresh(); return; }
+    try {
+      const man = filletEdges(K, fl.man, list, t.r, t.type);
+      if (man.isEmpty()) throw new Error('nothing is left');
+      const parts = man.decompose(); const n = parts.length; parts.forEach(free);
+      const rd = renderData({ man, render: null }); const o = flTarget();
+      fl.result = { man, rd, parts: n, dv: man.volume() - fl.man.volume() };
+      if (t.preview) app.view.preview = { items: [{ rd, model: new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), normalMat: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), rgb: hex(o?.color || '#2F9C95'), hole: false, selected: false, centre: [0, 0, 0] }], ghost: new Map([[t.id, 'H']]) };
+    } catch (e) { fl.error = `This rounding didn’t work: ${e.message}. Try a smaller size, or fewer edges at once.`; }
+    app.view.redraw(); app.refresh();
+  }
+  const flSchedule = () => { clearTimeout(fl?.timer); if (fl) fl.timer = setTimeout(flCompute, 60); };
+  function closeFillet() {
+    if (!app.filletTool) return; clearTimeout(fl?.timer);
+    app.filletTool = null; app.view.edgePick = null; app.view.extraLines = null; flRelease(true);
+    if (app.toolPanel === filletPanel) app.toolPanel = null; app.view.canvas.style.cursor = '';
+    bar.querySelector('[data-act="fillet"]')?.classList.remove('on'); app.refresh?.(); app.view.redraw();
+  }
+  app.closeFillet = closeFillet;
+  app.openFillet = () => {
+    if (app.mode !== 'design') app.setMode('design');
+    const sel = app.scene.selected().filter((o) => !o.hole);
+    if (sel.length !== 1) { app.toast('Select one part first, then choose Fillet (E).'); return; }
+    if (app.filletTool?.id === sel[0].id) return;
+    closeFillet(); app.closeBoolean?.(); if (app.view.measure) app.view.setMeasure(false); app._cut = null;
+    const prev = app._filletPrefs || { r: 1, type: 'fillet', chain: true };
+    app.filletTool = { id: sel[0].id, edges: new Set(), r: prev.r, type: prev.type, chain: prev.chain, keep: false, preview: true };
+    flPrepare();
+    app.view.edgePick = {
+      hover: (x, y) => { const f = edgeAt(x, y); app.view.canvas.style.cursor = f ? 'pointer' : ''; flLines(f); app.view.redraw(); },
+      click: (x, y) => {
+        const t = app.filletTool; const f = edgeAt(x, y); if (!f) return;
+        const group = withChain(f); const on = !t.edges.has(f.id);
+        for (const g of group) { if (on) t.edges.add(g.id); else t.edges.delete(g.id); }
+        flLines(f); flSchedule(); app.refresh();
+      },
+    };
+    app.toolPanel = filletPanel; document.getElementById('app').classList.add('show-right');
+    bar.querySelector('[data-act="fillet"]')?.classList.add('on');
+    flLines(null); app.refresh(); app.view.redraw();
+    app.toast(fl?.edges.length ? 'Click the edges to round. Click again to unselect; drag to turn the view.' : 'This part has no sharp edges to round.', 3500);
+  };
+  // follow the part if it's edited; switch to another part if a different single part is selected
+  app.scene.on('change', () => { if (!app.filletTool) return; if (!flTarget()) { closeFillet(); return; } if (fl && fl.key !== flKey(flTarget())) { flPrepare(); flLines(null); flSchedule(); } });
+  app.scene.on('select', () => { const t = app.filletTool; if (!t) return; const sel = app.scene.selected(); if (sel.length === 1 && sel[0].id !== t.id && !sel[0].hole) { closeFillet(); app.openFillet(); } });
+  app.on('mode', () => { if (app.mode !== 'design') closeFillet(); });
+  function applyFillet() {
+    const t = app.filletTool; const o = flTarget(); flCompute();
+    if (!fl?.result) { app.toast(fl?.error || 'Select at least one edge first.'); return; }
+    const s = app.scene; const mesh = fl.result.man.getMesh(); let made = null; const n = t.edges.size;
+    s.edit('fillet edges', () => {
+      made = app.addMesh(`${o.name} ${t.type === 'chamfer' ? 'chamfered' : 'filleted'}`, xyzOnly(mesh), mesh.triVerts, o.color);
+      const idx = s.objects.indexOf(o); s.objects = s.objects.filter((x) => x !== made);
+      if (t.keep) o.visible = false; else s.objects = s.objects.filter((x) => x !== o);
+      s.objects.splice(Math.min(idx < 0 ? s.objects.length : idx, s.objects.length), 0, made);
+      s.selection = new Set([made.id]);
+    });
+    app.toast(`${t.type === 'chamfer' ? 'Chamfered' : 'Rounded'} ${n} edge${n === 1 ? '' : 's'}.${t.keep ? ' The original is hidden in the Objects list.' : ''}`);
+    closeFillet(); s.emit('select');
+  }
+  function filletPanel() {
+    const t = app.filletTool; if (!t) return []; const o = flTarget(); if (!fl) flPrepare();
+    const sel = (fl?.edges || []).filter((f) => t.edges.has(f.id));
+    const set = (k, v) => { t[k] = v; app._filletPrefs = { r: t.r, type: t.type, chain: t.chain }; flSchedule(); app.refresh(); };
+    const top = () => { if (!fl?.edges.length) return []; const zmax = Math.max(...fl.edges.flatMap((f) => f.pts.map((p) => p[2]))); return fl.edges.filter((f) => f.pts.every((p) => Math.abs(p[2] - zmax) < 0.01)); };
+    const pickSet = (list) => { list.forEach((f) => t.edges.add(f.id)); flLines(null); flSchedule(); app.refresh(); };
+    const res = fl?.result;
+    return [
+      h('div', { class: 'tool-head' }, h('h3', {}, t.type === 'chamfer' ? 'Chamfer edges' : 'Fillet edges'), h('button', { class: 'btn', onclick: closeFillet }, 'Close')),
+      h('p', { class: 'note' }, h('b', {}, o?.name || ''), ` · ${fl?.edges.length || 0} sharp edges. Click edges in the view to select them, click again to unselect. Drag to turn the view.`),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Edge shape', style: { margin: '8px 0' } },
+        h('button', { 'aria-pressed': String(t.type === 'fillet'), onclick: () => set('type', 'fillet') }, 'Fillet (round)'),
+        h('button', { 'aria-pressed': String(t.type === 'chamfer'), onclick: () => set('type', 'chamfer') }, 'Chamfer (45°)')),
+      h('fieldset', {}, row(t.type === 'chamfer' ? 'Chamfer size' : 'Radius', numField(t.r, (v) => set('r', Math.max(0.05, v)), { min: 0.05, max: 100, step: 0.1 }), 'mm')),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.chain, onchange: (e) => set('chain', e.target.checked) }), 'Select connected smooth edges together (a whole rounded outline or circle)'),
+      h('div', { class: 'actions', style: { margin: '6px 0' } },
+        h('button', { class: 'btn', onclick: () => pickSet(top()) }, 'Top edges'),
+        h('button', { class: 'btn', onclick: () => pickSet(fl?.edges || []) }, 'All edges'),
+        h('button', { class: 'btn', disabled: !sel.length, onclick: () => { t.edges.clear(); flLines(null); flSchedule(); app.refresh(); } }, 'Clear')),
+      h('p', { class: 'grp-label' }, `Selected (${sel.length})`),
+      sel.length ? h('ul', { class: 'bool-list' }, ...sel.slice(0, 40).map((f) => h('li', { class: 'bool-row' }, h('span', { class: 'sw', style: { background: 'rgb(250,128,30)' } }), h('span', { class: 'nm' }, edgeLabel(f)),
+        h('button', { class: 'x', 'aria-label': 'Unselect this edge', onclick: () => { t.edges.delete(f.id); flLines(null); flSchedule(); app.refresh(); } }, '×'))), sel.length > 40 ? h('li', { class: 'note' }, `and ${sel.length - 40} more`) : null)
+        : h('p', { class: 'note' }, 'No edges selected yet. Hover over the part: the edge under the pointer lights up.'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.preview, onchange: (e) => { t.preview = e.target.checked; flSchedule(); } }), 'Show the result in the view'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.keep, onchange: (e) => { t.keep = e.target.checked; } }), 'Keep the original part (hidden)'),
+      fl?.error ? h('div', { class: 'error-box' }, fl.error)
+        : res ? h('p', { class: 'note result' }, `Result: ${res.dv < 0 ? 'removes' : 'adds'} ${fmt(Math.abs(res.dv), 1)} mm³${res.parts > 1 ? `, ${res.parts} separate pieces` : ''}. Outside edges are rounded off; inside corners are filled.`) : null,
+      h('div', { class: 'actions' },
+        h('button', { class: 'btn primary wide', disabled: !res || !!fl?.error, onclick: applyFillet }, t.type === 'chamfer' ? 'Apply chamfer' : 'Apply fillet'),
+        h('button', { class: 'btn wide', onclick: closeFillet }, 'Cancel')),
+      h('p', { class: 'note' }, 'The result is a mesh, like a boolean. Where several rounded edges meet at a corner, the corner is rounded by each edge in turn (not a ball corner). Tip: round edges before scaling, and keep the size smaller than the faces next to the edge.'),
+    ];
+  }
+  add0('Fillet edges', () => app.openFillet(), 'E');
+  add0('Chamfer edges', () => { app._filletPrefs = { ...(app._filletPrefs || { r: 1, chain: true }), type: 'chamfer' }; app.openFillet(); });
 
   // ------------------------------------------------------------ search palette
   const add = (label, run, keys) => app.addAction({ label, group: 'Transform', keys, run });

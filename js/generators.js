@@ -1,5 +1,5 @@
 // Parametric generators: complete printable parts from a few numbers.
-import { registerKind } from './kernel.js';
+import { registerKind, K as KERNEL } from './kernel.js';
 import { roundedRect, roundedBox, circlePts, poly, METRIC, ICONS } from './shapes.js';
 import { h } from './ui.js';
 
@@ -420,8 +420,26 @@ const HEX_LAYOUTS = {
   flower: [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1]],
   wall: [[-2, 0], [-1, 0], [0, 0], [1, 0], [-1, 1], [-1, -1], [1, -1]],
 };
+// Any number of hexagons. Each one is a module: adding a hexagon reuses the bars it shares with its neighbours,
+// so a wall grows one cell at a time. compact = honeycomb cluster that grows ring by ring around the first cell;
+// strip = two rows, zig-zag (the classic garage wall); row = one straight row; column = one stacked line.
+function hexCells(n, shape) {
+  const out = [];
+  if (shape === 'row') for (let i = 0; i < n; i++) out.push([i, 0]);
+  else if (shape === 'strip') for (let i = 0; i < n; i++) out.push([Math.floor(i / 2), i % 2]);
+  else if (shape === 'column') for (let i = 0; i < n; i++) out.push([-Math.floor(i / 2), i]);
+  else { // compact: spiral out ring by ring
+    const dirs = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]; out.push([0, 0]);
+    for (let k = 1; out.length < n; k++) {
+      let q = dirs[4][0] * k, r = dirs[4][1] * k;
+      for (let d = 0; d < 6 && out.length < n; d++) for (let j = 0; j < k && out.length < n; j++) { out.push([q, r]); q += dirs[d][0]; r += dirs[d][1]; }
+    }
+  }
+  return out;
+}
 function hexGrid(p) {
   let cells = HEX_LAYOUTS[p.layoutHex];
+  if (p.layoutHex === 'count') cells = hexCells(Math.max(1, Math.round(p.hexCount || 1)), p.hexShape || 'compact');
   if (p.layoutHex === 'grid') { cells = []; for (let r = 0; r < p.rows; r++) for (let q = 0; q < p.cols; q++) cells.push([q - Math.floor(r / 2), r]); }
   const S = p.side, verts = new Map(), edges = new Map();
   const key = (x, y) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
@@ -448,12 +466,32 @@ function hexDims(p) {
   const bar = p.side - 2 * R - 0.4;
   return { W, Wo, g0, ct, g, jw, iW, oW, jh, R, bar };
 }
+// Modular ends: every joint is a 3-way connector. Where a joint has only two bars (the outside of the wall), the
+// third arm points outward and is closed with a blanking plug that pulls out, so a hexagon can be added later.
+const modularEnds = (p) => (p.ends || 'closed') === 'modular';
+function freeDir(dirs) { // the missing third direction of a 2-bar joint (bars are 120° apart on a hex lattice)
+  const a = dirs[0]; for (const c of [a + 120, a + 240]) { const n = ((Math.round(c) % 360) + 540) % 360 - 180; if (!dirs.some((d) => Math.abs(((d - n + 540) % 360) - 180) < 2)) return n; }
+  return a + 180;
+}
+const jointDirs = (v, p) => (modularEnds(p) && v.dirs.length === 2 ? [...v.dirs, freeDir(v.dirs)] : v.dirs);
+// Blanking plug: slides into a connector sleeve like the end of a bar (same outside shape, same clearance) with a
+// plate that closes the end. Built along +x from the joint centre, like a sleeve.
+function hexPlug(p, K) {
+  const M = K.Manifold; const { Wo, jw, oW, R } = hexDims(p); const CS = K.CrossSection; const c = 0.4, t = 2;
+  const outer = CS.ofPolygons([[[-Wo / 2 + c, 0], [Wo / 2 - c, 0], [Wo / 2, c], [Wo / 2, p.h], [-Wo / 2, p.h], [-Wo / 2, c]]]);
+  // the plug fills the sleeve from 0.3 mm short of the hub to its mouth, and runs 0.3 mm on into the end plate
+  const L = p.sleeve; const plug = along(outer, L, K).translate([R + 0.3 + L / 2, 0, 0]);
+  const plate = M.cube([t, oW, p.h + jw]).translate([R + p.sleeve, -oW / 2, -jw]);
+  // grip: a notch on top of the plate edge so it can be levered out with a fingernail or a flat screwdriver
+  return M.union([plug, plate]).subtract(M.cube([t + 2, 6, 1.2]).translate([R + p.sleeve + t / 2, -3, p.h - 1.2]));
+}
 function hexConnector(p, K, dirs) {
   const M = K.Manifold; const { W, g0, ct, jw, iW, oW, jh, R } = hexDims(p);
   const top = p.h + ct, sl = p.sleeve;
   const inner = K.CrossSection.ofPolygons([[[-iW / 2 + 0.4, -0.01], [iW / 2 - 0.4, -0.01], [iW / 2, 0.4], [iW / 2, jh + 1], [-iW / 2, jh + 1], [-iW / 2, 0.4]]]);
   const prof = K.CrossSection.square([oW, jh + jw]).translate([-oW / 2, -jw]).subtract(inner);
-  const sleeve = along(prof, sl, K).translate([R + sl / 2, 0, 0]);
+  // the sleeve reaches 0.5 mm into the hub so every arm is fused to it (touching faces alone can leave an arm loose)
+  const sleeve = along(prof, sl + 0.5, K).translate([R + sl / 2 - 0.25, 0, 0]);
   const face = M.cube([0.01, oW, top + jw]).translate([R - 0.01, -oW / 2, -jw]);
   const hub = M.hull(dirs.map((a) => face.rotate([0, 0, a])));
   const tunnel = M.cube([R + 0.5, W, g0 - p.floor]).translate([0, -W / 2, p.floor]);
@@ -467,43 +505,244 @@ function hexConnector(p, K, dirs) {
 function hexCounts(p) {
   try {
     const gr = hexGrid(p); const d = hexDims(p);
-    const n3 = gr.verts.filter((v) => v.dirs.length === 3).length, n2 = gr.verts.filter((v) => v.dirs.length === 2).length;
-    return { gr, d, n3, n2, bars: gr.edges.length };
+    let n3 = gr.verts.filter((v) => v.dirs.length === 3).length, n2 = gr.verts.filter((v) => v.dirs.length === 2).length, plugs = 0;
+    if (modularEnds(p)) { plugs = n2; n3 += n2; n2 = 0; }
+    return { gr, d, n3, n2, plugs, bars: gr.edges.length };
   } catch { return null; }
 }
+// ---- Full-frame diffuser: one cover over every bar and connector, held on with double-sided tape.
+// The footprint is the bars plus the connector hubs. The cover sits on the hub tops (with the tape under it); ribs
+// under the cover drop onto the bar tops so the tape touches every bar too. Optional fillets/chamfers on the
+// outer edge and/or the edges around each hexagon. It can be split so each piece fits a plate: cuts go across
+// the middle of bars (never through a connector), so every joint sits on a bar with tape under both sides.
+function hullPts(pts) { // convex hull, counter-clockwise (Andrew's monotone chain)
+  const q = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (q.length < 3) return q;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const v of q) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], v) <= 1e-9) lo.pop(); lo.push(v); }
+  for (const v of q.slice().reverse()) { while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], v) <= 1e-9) up.pop(); up.push(v); }
+  return lo.slice(0, -1).concat(up.slice(0, -1));
+}
+const ringArea = (r) => { let a = 0; for (let i = 0; i < r.length; i++) { const [x1, y1] = r[i], [x2, y2] = r[(i + 1) % r.length]; a += x1 * y2 - x2 * y1; } return a / 2; };
+function stripAlong(a, b, t0, t1, w) { // rectangle along a→b from distance t0 to t1, width w (counter-clockwise)
+  const L = Math.hypot(b.x - a.x, b.y - a.y), ux = (b.x - a.x) / L, uy = (b.y - a.y) / L;
+  const P = (t, s) => [a.x + ux * t - uy * s * w / 2, a.y + uy * t + ux * s * w / 2];
+  return [P(t0, -1), P(t1, -1), P(t1, 1), P(t0, 1)];
+}
+function frameFootprint(p, K, gr, d, w) {
+  const CS = K.CrossSection; const rings = [];
+  for (const [a, b] of gr.edges) rings.push(stripAlong(a, b, d.R - 0.05, p.side - d.R + 0.05, w));
+  for (const v of gr.verts) { // the hub: same shape as the connector's hub (hull of the sleeve faces), at the cover width
+    const pts = [];
+    for (const deg of jointDirs(v, p)) { const r = deg * Math.PI / 180, ux = Math.cos(r), uy = Math.sin(r); pts.push([v.x + ux * d.R + uy * w / 2, v.y + uy * d.R - ux * w / 2], [v.x + ux * d.R - uy * w / 2, v.y + uy * d.R + ux * w / 2]); }
+    rings.push(hullPts(pts));
+  }
+  return CS.union(rings.map((r) => CS.ofPolygons([r])));
+}
+// The footprint shrunk at its top for a fillet/chamfer, only on the edges that are switched on.
+function insetSection(K, outerCS, holesCS, dOut, dIn) {
+  const o = dOut > 0 ? outerCS.offset(-dOut, 'Miter', 4) : outerCS;
+  if (!holesCS || holesCS.isEmpty()) return o;
+  return o.subtract(dIn > 0 ? holesCS.offset(dIn, 'Miter', 4) : holesCS);
+}
+function frameCover(p, K, foot, z0) {
+  const M = K.Manifold, CS = K.CrossSection; const T = p.fdT;
+  const on = p.filOut || p.filIn; const r = Math.min(p.filR, T - 0.3);
+  if (!on || !(r > 0.05)) return foot.extrude(T).translate([0, 0, z0]);
+  const rings = foot.toPolygons(); const outerCS = CS.ofPolygons(rings.filter((g) => ringArea(g) > 0));
+  const holesCS = outerCS.subtract(foot);
+  // steps of 0.1 mm or finer: thinner than any print layer, so it slices exactly like a smooth fillet
+  const n = Math.max(4, Math.min(30, Math.ceil(r / 0.1))); const dz = r / n;
+  const parts = [foot.extrude(T - r + 0.002).translate([0, 0, z0])];
+  for (let i = 1; i <= n; i++) {
+    const t = r * i / n; const ins = p.filType === 'chamfer' ? t : r - Math.sqrt(Math.max(0, r * r - t * t));
+    const sec = insetSection(K, outerCS, holesCS, p.filOut ? ins : 0, p.filIn ? ins : 0);
+    if (!sec.isEmpty()) parts.push(sec.extrude(dz + 0.002).translate([0, 0, z0 + T - r + (i - 1) * dz]));
+  }
+  return M.union(parts);
+}
+// Points closer to v than to any other vertex: cutting along these lines splits every bar at its middle.
+function clipHalf(poly, nx, ny, c) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const A = poly[i], B = poly[(i + 1) % poly.length]; const fa = A[0] * nx + A[1] * ny - c, fb = B[0] * nx + B[1] * ny - c;
+    if (fa <= 0) out.push(A);
+    if ((fa < 0 && fb > 0) || (fa > 0 && fb < 0)) { const t = fa / (fa - fb); out.push([A[0] + (B[0] - A[0]) * t, A[1] + (B[1] - A[1]) * t]); }
+  }
+  return out;
+}
+function vertexCell(v, verts, S) {
+  let poly = [[v.x - 3 * S, v.y - 3 * S], [v.x + 3 * S, v.y - 3 * S], [v.x + 3 * S, v.y + 3 * S], [v.x - 3 * S, v.y + 3 * S]];
+  for (const u of verts) {
+    if (u === v) continue; const dx = u.x - v.x, dy = u.y - v.y; if (Math.hypot(dx, dy) > 2.5 * S) continue;
+    poly = clipHalf(poly, dx, dy, (u.x + v.x) / 2 * dx + (u.y + v.y) / 2 * dy);
+  }
+  return poly;
+}
+// Smallest turn (0–175°, 5° steps) at which the points fit in maxW × maxD; null if none.
+function fitTurn(pts, maxW, maxD) {
+  for (let a = 0; a < 180; a += 5) {
+    const c = Math.cos(a * Math.PI / 180), s = Math.sin(a * Math.PI / 180); let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of pts) { const X = x * c - y * s, Y = x * s + y * c; x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y); }
+    if (x1 - x0 <= maxW && y1 - y0 <= maxD) return a;
+  }
+  return null;
+}
+function frameDiffuserLimits(p) {
+  if (p.fdSplit === 'joint') return [1e9, 1e9];
+  if (p.fdSplit === 'custom') return [p.fdMaxW, p.fdMaxD];
+  if (p.fdSplit === 'plate') return [(p.bedW || 256) - 2 * FRAME_PLATE_MARGIN, (p.bedD || 256) - 2 * FRAME_PLATE_MARGIN];
+  return null;
+}
+const FRAME_PLATE_MARGIN = 3; // mm kept clear at each plate edge (skirt, brim, purge line)
+function frameDiffuserPieces(p, K, gr, d) {
+  const CS = K.CrossSection; const w = d.oW + 2 * p.fdOver; const foot = frameFootprint(p, K, gr, d, w);
+  const lim = frameDiffuserLimits(p);
+  if (!lim) return { foot, w, groups: [{ verts: gr.verts, cs: null, turn: 0 }] };
+  const cells = new Map(gr.verts.map((v) => [v, vertexCell(v, gr.verts, p.side)]));
+  if (p.fdSplit === 'joint') { // modular: one piece per connector (its cover and half of each bar)
+    const region = (v) => CS.ofPolygons([cells.get(v)]);
+    return { foot, w, groups: gr.verts.map((v) => { const cs = region(v); const t = fitTurn(foot.intersect(cs).toPolygons().flat(), 1e9, 1e9) ?? 0; return { verts: [v], cs, turn: t }; }) };
+  }
+  const [mw, md] = lim;
+  const adj = new Map(gr.verts.map((v) => [v, []])); for (const [a, b] of gr.edges) { adj.get(a).push(b); adj.get(b).push(a); }
+  // closing (grow, then shrink) seals the hairline gaps rounding leaves where neighbouring cells meet
+  const regionOf = (vs) => CS.union(vs.map((v) => CS.ofPolygons([cells.get(v)]))).offset(0.05, 'Miter', 4).offset(-0.05, 'Miter', 4);
+  const turnOf = (vs) => { const cut = foot.intersect(regionOf(vs)); return fitTurn(cut.toPolygons().flat(), mw, md); };
+  // try the whole frame in one piece first (a small layout on a big plate)
+  const whole = fitTurn(foot.toPolygons().flat(), mw, md);
+  if (whole !== null) return { foot, w, groups: [{ verts: gr.verts, cs: null, turn: whole }] };
+  // grow pieces outward from a corner of the layout, one bar at a time, while they still fit; try a few corners and
+  // directions and keep the split with the fewest pieces
+  const split = (ang) => {
+    const c = Math.cos(ang), sn = Math.sin(ang); const key = (v) => v.x * c + v.y * sn;
+    const order = gr.verts.slice().sort((a, b) => key(a) - key(b) || a.x - b.x || a.y - b.y); const left = new Set(order); const groups = [];
+    while (left.size) {
+      const seed = order.find((v) => left.has(v)); const grp = [seed]; left.delete(seed);
+      let turn = turnOf(grp);
+      if (turn === null) {
+        const b = foot.intersect(regionOf(grp)).bounds(); const sz = Math.ceil(Math.min(b.max[0] - b.min[0], b.max[1] - b.min[1]));
+        throw new Error(`A piece can’t be smaller than one connector with half of each bar (about ${sz} mm across). Choose a bigger plate or a bigger custom size, or a smaller hexagon side.`);
+      }
+      for (let grew = true; grew;) {
+        grew = false;
+        const cands = [...new Set(grp.flatMap((v) => adj.get(v)))].filter((u) => left.has(u)).sort((a, b) => key(a) - key(b) || a.x - b.x || a.y - b.y);
+        for (const u of cands) { const t = turnOf([...grp, u]); if (t !== null) { grp.push(u); left.delete(u); turn = t; grew = true; break; } }
+      }
+      groups.push({ verts: grp, turn });
+    }
+    return groups;
+  };
+  let best = null;
+  for (let k = 0; k < 6; k++) { const gs = split(k * Math.PI / 3); if (!best || gs.length < best.length) best = gs; }
+  const groups = best.map((g) => ({ ...g, cs: regionOf(g.verts) }));
+  return { foot, w, groups };
+}
+function frameDiffuser(p, K, gr, d) {
+  const M = K.Manifold; const { foot, groups } = frameDiffuserPieces(p, K, gr, d);
+  const tape = Math.max(0, p.tape); const z0 = p.h + d.ct + tape; // cover underside: on the hub tops, plus the tape
+  let solid = frameCover(p, K, foot, z0);
+  // ribs onto the bar tops (the bars are d.ct lower than the hubs), so the tape holds the bars as well
+  const ribs = gr.edges.map(([a, b]) => K.CrossSection.ofPolygons([stripAlong(a, b, d.R + 0.2, p.side - d.R - 0.2, d.Wo)]).extrude(d.ct + 0.01).translate([0, 0, p.h + tape]));
+  solid = M.union([solid, ...ribs]);
+  const sep = p.layout === 'separate';
+  // assembled view only: trim 0.3 mm off each side of every cut so the joints show (the pieces to print are full size)
+  const prism = (cs) => (sep ? cs : cs.offset(-0.3, 'Miter', 4)).extrude(400).translate([0, 0, -200]);
+  let pieces = groups.map((g) => (g.cs ? solid.intersect(prism(g.cs)) : solid));
+  pieces = pieces.map((m, i) => ({ m, turn: groups[i].turn })).filter((x) => !x.m.isEmpty() && x.m.volume() > 1);
+  const pick = p.fdPiece > 0 ? Math.min(p.fdPiece, pieces.length) : 0;
+  if (!sep) return pick ? pieces[pick - 1].m : pieces.length === 1 ? pieces[0].m : M.compose(pieces.map((x) => x.m));
+  // to print: turned to fit the plate, cover face down (smooth face, ribs up, no supports), side by side
+  const flat = pieces.map(({ m, turn }) => { const f = m.rotate([0, 0, turn]).rotate([180, 0, 0]); const b = f.boundingBox(); return f.translate([-(b.min[0] + b.max[0]) / 2, -(b.min[1] + b.max[1]) / 2, -b.min[2]]); });
+  if (pick) return flat[pick - 1];
+  let x = 0; const out = [];
+  for (const f of flat) { const b = f.boundingBox(); const wx = b.max[0] - b.min[0]; out.push(f.translate([x + wx / 2, 0, 0])); x += wx + 10; }
+  return M.compose(out).translate([-(x - 10) / 2, 0, 0]);
+}
+function frameDiffuserInfo(p) {
+  try {
+    const gr = hexGrid(p); const d = hexDims(p); const K = KERNEL || kernelRef; if (!K) return null;
+    const { groups } = frameDiffuserPieces(p, K, gr, d); return { pieces: groups.length };
+  } catch (e) { return { error: e.message }; }
+}
+let kernelRef = null;
+const infoMemo = new Map();
+function frameDiffuserInfoMemo(p) {
+  const k = JSON.stringify(['ends', 'sleeve', 'layoutHex', 'hexCount', 'hexShape', 'rows', 'cols', 'side', 'strip', 'h', 'wall', 'dT', 'fdOver', 'fdSplit', 'fdMaxW', 'fdMaxD', 'bedW', 'bedD'].map((x) => p[x]));
+  if (!infoMemo.has(k)) { const r = frameDiffuserInfo(p); if (!r) return null; if (infoMemo.size > 50) infoMemo.clear(); infoMemo.set(k, r); }
+  return infoMemo.get(k);
+}
+const isFrame = (q) => (q.diffType || 'snap') === 'frame';
+const filOn = (q) => isFrame(q) && (q.filOut || q.filIn);
 gen('hexlight', {
   label: 'Hexagon wall lights', blurb: 'Honeycomb LED wall light: channel bars with snap-in diffusers, joined by 2-way and 3-way connectors.',
   icon: gicon('<path d="M10 4l6 3.5v7L10 18l-6-3.5v-7z"/><path d="M22 11l6 3.5v7L22 25l-6-3.5v-7z"/><path d="M10 18v7l6 3.5"/>'),
   keepOrigin: true,
-  multi: [['bar', 'Bars', '#2B2F36'], ['diffuser', 'Diffusers', '#F3F3F0'], ['joint3', '3-way connectors', '#2B2F36'], ['joint2', '2-way connectors', '#2B2F36']],
-  params: [sel('layoutHex', 'Layout', 'wall', [['single', 'One hexagon'], ['three', 'Three'], ['flower', 'Seven (flower)'], ['wall', 'Seven in a row (wall)'], ['grid', 'Grid (rows × columns)']]),
-    int('rows', 'Rows (grid)', 2, 1, 12), int('cols', 'Columns (grid)', 3, 1, 12),
+  multi: [['bar', 'Bars', '#2B2F36'], ['diffuser', 'Diffusers', '#F3F3F0'], ['joint3', '3-way connectors', '#2B2F36'], ['joint2', 'Edge pieces (plugs or 2-way)', '#2B2F36']],
+  params: [sel('layoutHex', 'Layout', 'count', [['count', 'Choose how many hexagons'], ['single', 'One hexagon'], ['three', 'Three'], ['flower', 'Seven (flower)'], ['wall', 'Seven in a row (wall)'], ['grid', 'Grid (rows × columns)']]),
+    { ...int('hexCount', 'Number of hexagons', 7, 1, 60), when: (q) => q.layoutHex === 'count' },
+    { ...sel('hexShape', 'Arrangement', 'compact', [['compact', 'Honeycomb cluster'], ['strip', 'Two rows (zig-zag wall)'], ['row', 'One row'], ['column', 'One column']]), when: (q) => q.layoutHex === 'count' },
+    { ...int('rows', 'Rows (grid)', 2, 1, 12), when: (q) => q.layoutHex === 'grid' }, { ...int('cols', 'Columns (grid)', 3, 1, 12), when: (q) => q.layoutHex === 'grid' },
     n('side', 'Hexagon side (vertex to vertex)', 150, 60, 800, 1), n('strip', 'LED strip width', 10, 3, 30, 0.5), n('h', 'Channel height', 9.25, 8.25, 30, 0.25),
     n('wall', 'Wall', 2.2, 1.4, 4, 0.1), n('floor', 'Floor', 1.4, 0.8, 4, 0.1), n('dT', 'Diffuser cover thickness', 1.45, 0.6, 3, 0.05), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
     n('sleeve', 'Connector sleeve length', 15, 6, 40, 1), bool('backHole', 'Cable hole through the back of the connectors', false),
+    sel('ends', 'Outside edge', 'modular', [['modular', 'Modular: 3-way connectors with plugs (add hexagons later)'], ['closed', 'Closed: 2-way corners (neater, fixed size)']]),
+    sel('diffType', 'Diffuser', 'frame', [['frame', 'Full frame, one cover (double-sided tape)'], ['snap', 'Snap-in, one per bar']]),
+    { ...n('fdT', 'Full-frame cover thickness', 2, 0.8, 6, 0.1), when: isFrame },
+    { ...n('fdOver', 'Cover overhang past the connectors', 0.5, 0, 6, 0.1), when: isFrame },
+    { ...n('tape', 'Double-sided tape thickness', 1, 0, 3, 0.05), when: isFrame },
+    { ...sel('fdSplit', 'Piece size', 'plate', [['none', 'No limit (one piece)'], ['plate', 'Fit my build plate'], ['custom', 'Custom maximum size'], ['joint', 'Modular: one piece per connector']]), when: isFrame },
+    { ...n('fdMaxW', 'Largest piece: width', 200, 60, 3000, 1), when: (q) => isFrame(q) && q.fdSplit === 'custom' },
+    { ...n('fdMaxD', 'Largest piece: depth', 200, 60, 3000, 1), when: (q) => isFrame(q) && q.fdSplit === 'custom' },
+    { ...int('fdPiece', 'Show piece (0 = all)', 0, 0, 60), when: (q) => isFrame(q) && q.fdSplit !== 'none' },
+    { ...bool('filOut', 'Round the outer edge', true), when: isFrame },
+    { ...bool('filIn', 'Round the edges around each hexagon', true), when: isFrame },
+    { ...sel('filType', 'Edge shape', 'round', [['round', 'Fillet (round)'], ['chamfer', 'Chamfer (45°)']]), when: filOn },
+    { ...n('filR', 'Fillet / chamfer size', 0.8, 0.1, 5, 0.1), when: filOn },
+    { ...n('bedW', 'Plate width', 256, 50, 2000), when: () => false }, { ...n('bedD', 'Plate depth', 256, 50, 2000), when: () => false },
     sel('layout', 'Show', 'assembled', [['assembled', 'Whole wall (assembled)'], ['separate', 'One of each part (to print)']]),
-    sel('part', 'This object is the', 'bar', [['bar', 'Bars'], ['diffuser', 'Diffusers'], ['joint3', '3-way connectors'], ['joint2', '2-way connectors']])],
+    sel('part', 'This object is the', 'bar', [['bar', 'Bars'], ['diffuser', 'Diffusers'], ['joint3', '3-way connectors'], ['joint2', 'Edge pieces (plugs, or 2-way connectors when closed)']])],
   build: (p, K) => {
     const M = K.Manifold; const d = hexDims(p);
     if (d.bar < 20) throw new Error(`Hexagons are too small for this channel. Make the side at least ${Math.ceil(2 * d.R + 21)} mm.`);
     const gr = hexGrid(p); const sep = p.layout === 'separate';
+    if (p.part === 'diffuser' && isFrame(p)) { kernelRef = K; return frameDiffuser(p, K, gr, d); }
     if (p.part === 'bar' || p.part === 'diffuser') {
       const piece = p.part === 'bar' ? along(ledProfile(p, K), d.bar, K) : along(ledDiffuserProfile(p, K), d.bar - 0.3, K);
       if (sep) return p.part === 'bar' ? piece : (() => { const f = piece.rotate([180, 0, 0]); const b = f.boundingBox(); return f.translate([0, d.oW + 10 - b.min[1], -b.min[2]]); })();
       return M.union(gr.edges.map(([a, b]) => piece.rotate([0, 0, Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI]).translate([(a.x + b.x) / 2, (a.y + b.y) / 2, 0])));
     }
+    if (p.part === 'joint2' && modularEnds(p)) {
+      // modular ends: this part is the blanking plugs for the outward arms
+      const ends = gr.verts.filter((v) => v.dirs.length === 2);
+      if (!ends.length) throw new Error('This layout has no open ends to plug.');
+      const plug = hexPlug(p, K);
+      if (sep) { const f = plug.rotate([0, -90, 0]); const b = f.boundingBox(); return f.translate([-(b.min[0] + b.max[0]) / 2 + 2 * d.R + p.sleeve + 15, -(b.min[1] + b.max[1]) / 2 - (d.oW + 2 * d.R + p.sleeve + 25), -b.min[2]]); } // plate down on the bed
+      return M.union(ends.map((v) => plug.rotate([0, 0, freeDir(v.dirs)]).translate([v.x, v.y, 0])));
+    }
     const want = p.part === 'joint3' ? 3 : 2;
-    const vs = gr.verts.filter((v) => v.dirs.length === want);
+    const vs = gr.verts.filter((v) => jointDirs(v, p).length === want);
     if (!vs.length) throw new Error(`This layout has no ${want}-way connectors.`);
     if (sep) { const c = hexConnector(p, K, want === 3 ? [90, 210, 330] : [30, 150]); return c.translate([want === 3 ? -2 * d.R - p.sleeve - 15 : 2 * d.R + p.sleeve + 15, -(d.oW + 2 * d.R + p.sleeve + 25), d.jw]); }
     const cache = new Map();
-    return M.union(vs.map((v) => { const k = v.dirs.slice().sort((x, y) => x - y).join(','); if (!cache.has(k)) cache.set(k, hexConnector(p, K, v.dirs)); return cache.get(k).translate([v.x, v.y, 0]); }));
+    return M.union(vs.map((v) => { const dirs = jointDirs(v, p); const k = dirs.slice().sort((x, y) => x - y).join(','); if (!cache.has(k)) cache.set(k, hexConnector(p, K, dirs)); return cache.get(k).translate([v.x, v.y, 0]); }));
   },
   note: (p) => {
     const c = hexCounts(p); if (!c) return '';
     const strip = (c.bars * (c.d.bar + 2 * c.d.R) / 1000).toFixed(1);
-    return `To print for this layout: ${c.bars} bars and ${c.bars} diffusers (${c.d.bar.toFixed(1)} mm each), ${c.n3} three-way and ${c.n2} two-way connectors. The wall is about ${Math.round(c.gr.W)} × ${Math.round(c.gr.H)} mm and needs about ${strip} m of LED strip. ` +
-      'Print bars on their back, diffusers cover-down in translucent filament, connectors flat. Cut the strip to one piece per bar and join neighbours with short wires through the connector hubs (strips can’t bend sideways). Screw each connector to the wall through its centre. Use “One of each part” to print, then make copies with Make many.';
+    const joints = modularEnds(p) ? `${c.n3} three-way connectors and ${c.plugs} blanking plugs` : `${c.n3} three-way and ${c.n2} two-way connectors`;
+    const grow = modularEnds(p) ? 'Every part is modular: all joints are the same 3-way connector, and the arms on the outside edge are closed with plugs. To add a hexagon later, pull out the plugs where it goes, slide in bars and fit connectors at the new corners. ' : 'The outside edge uses closed 2-way corners: to add a hexagon later, swap the 2-way corners it touches for 3-way connectors (or switch Outside edge to Modular). ';
+    const common = `${joints}. The wall is about ${Math.round(c.gr.W)} × ${Math.round(c.gr.H)} mm and needs about ${strip} m of LED strip. ${grow}`;
+    const wiring = 'Cut the strip to one piece per bar and join neighbours with short wires through the connector hubs (strips can’t bend sideways). Screw each connector to the wall through its centre. ';
+    if (isFrame(p)) {
+      const info = frameDiffuserInfoMemo(p);
+      const pcs = info?.error ? `Diffuser: ${info.error} ` : info ? `Full-frame diffuser: ${info.pieces === 1 ? 'one piece' : `${info.pieces} pieces`}${p.fdSplit === 'plate' ? ` (fits a ${p.bedW || 256} × ${p.bedD || 256} mm plate with ${FRAME_PLATE_MARGIN} mm to spare at each edge)` : p.fdSplit === 'custom' ? ` (each at most ${p.fdMaxW} × ${p.fdMaxD} mm)` : p.fdSplit === 'joint' ? ', one per connector: each covers its connector and half of each bar, so new hexagons just need more pieces (re-print the edge pieces next to a new hexagon, as they gain an arm)' : ''}. ` : '';
+      return `To print for this layout: ${c.bars} bars (${c.d.bar.toFixed(1)} mm each), ${common}${pcs}` +
+        'Print bars on their back and connectors flat. Print the diffuser cover face down in translucent filament (Show → One of each part lays the pieces out turned to fit; use Show piece to export one plate at a time). A chamfer prints cleaner than a fillet on the face-down edge. ' +
+        `Fix it with ${p.tape} mm double-sided tape on the connector tops and on the bar tops under the ribs; pieces join across the middle of a bar, so put tape under both sides of each joint. ` + wiring;
+    }
+    return `To print for this layout: ${c.bars} bars and ${c.bars} diffusers (${c.d.bar.toFixed(1)} mm each), ${common}` +
+      'Print bars on their back, diffusers cover-down in translucent filament, connectors flat. ' + wiring + 'Use “One of each part” to print, then make copies with Make many.';
   },
 });
 
@@ -545,12 +784,23 @@ gen('gfbase', {
 });
 
 // ------------------------------------------------------------------ UI tab
+// "Fit my build plate": keep generator parts that read the plate size in step with the chosen printer.
+function plateSize(app) { const b = app.printerBed?.() || app.view?.r?.bed; return b ? [b.w, b.d] : [256, 256]; }
+function syncPlate(app) {
+  const [w, d] = plateSize(app); let changed = false;
+  const visit = (list) => { for (const o of list || []) { if (o.children) visit(o.children); if (o.params && 'bedW' in o.params && (o.params.bedW !== w || o.params.bedD !== d)) { o.params = { ...o.params, bedW: w, bedD: d }; changed = true; } } };
+  visit(app.scene?.objects);
+  if (changed) { app.refresh?.(); app.view?.redraw?.(); }
+}
 export function install(app) {
+  if (typeof app.applyPrinter === 'function') { const orig = app.applyPrinter.bind(app); app.applyPrinter = (...a) => { const r = orig(...a); syncPlate(app); return r; }; }
+  app.scene?.on?.('change', () => syncPlate(app));
   const addGen = (g) => {
     app.setMode('design');
     if (!g.multi) return app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS });
     // several linked objects, one per part, so each can have its own colour in a 3MF
     const p = defaultsOf(g); const link = `L${Date.now().toString(36)}`; const s = app.scene; const made = [];
+    if ('bedW' in p) [p.bedW, p.bedD] = plateSize(app);
     const first = app.addShape(g.kind, { ...p, part: g.multi[0][0] }, { name: `${g.label} · ${g.multi[0][1]}`, color: g.multi[0][2] });
     first.link = link; first.local = ['part']; made.push(first);
     s.edit(`add ${g.label.toLowerCase()}`, () => {
