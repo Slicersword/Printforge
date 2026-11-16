@@ -137,7 +137,7 @@
 <input type="file" id="fileOpen" accept=".pforge,.json" hidden>
 <input type="file" id="fileImport" accept=".stl,.obj,.3mf,.glb,.gcode,.gco" multiple hidden>
 <input type="file" id="fileGcode" accept=".gcode,.gco,.g,.3mf" hidden>
-<div id="loading" class="loading" role="status" aria-live="polite"><div class="spinner"></div><p id="loadMsg">Loading the geometry engine…</p><div class="load-track" aria-hidden="true"><div id="loadBar" class="load-bar"></div></div><noscript><p>PrintForge needs JavaScript.</p></noscript></div>
+<div id="loading" class="loading" role="status" aria-live="polite"><div id="printMark" class="print-mark" aria-hidden="true"><svg viewBox="0 0 64 64"><defs><clipPath id="pmClip"><rect x="0" y="52" width="64" height="0"/></clipPath><pattern id="pmLayers" width="4" height="2" patternUnits="userSpaceOnUse"><rect width="4" height="1.2" class="pm-layer"/></pattern></defs><rect x="6" y="52" width="52" height="7" rx="2" class="pm-plate"/><path d="M18 52V30l14-10 14 10v22" class="pm-ghost"/><g clip-path="url(#pmClip)"><path d="M18 52V30l14-10 14 10v22h-9V40H27v12z" class="pm-part"/><path d="M18 52V30l14-10 14 10v22h-9V40H27v12z" fill="url(#pmLayers)"/></g></svg><span class="pm-nozzle"></span></div><p id="loadMsg">Loading the geometry engine…</p><div class="load-track" aria-hidden="true"><div id="loadBar" class="load-bar"></div></div><noscript><p>PrintForge needs JavaScript.</p></noscript></div>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

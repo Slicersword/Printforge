@@ -6,6 +6,7 @@ import { SHAPES, defaults } from './shapes.js';
 import { Viewport } from './viewport.js';
 import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row, IS_MAC, keyName } from './ui.js';
 import { PRINTERS, printerById } from './printers.js';
+import { installMotion, printProgress, setMotion } from './motion.js';
 const UNLIMITED = 20000; // mm: the work area with no plate (20 m each way, past the far edge of the view)
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
 import { eulerMatrix, transformDir, fmt, eulerFromMatrix, mul, transformPoint } from './math.js';
@@ -21,12 +22,14 @@ class App {
 
   async start() {
     const bar = document.getElementById('loadBar'), msg = document.getElementById('loadMsg');
-    const step = (t, f) => { if (msg) msg.textContent = t; if (bar && f != null) bar.style.width = `${Math.round(f * 100)}%`; };
+    const step = (t, f) => { if (msg) msg.textContent = t; if (bar && f != null) bar.style.width = `${Math.round(f * 100)}%`; if (f != null) printProgress(f); };
+    installMotion(); printProgress(0.04);
     await initKernel((f) => step(`Loading the geometry engine… ${Math.round(f * 85)}%`, f * 0.85));
     step('Starting the tools…', 0.9);
     this.scene = new Scene();
     setRepairHandler((o) => setTimeout(() => this.toast(`“${o.name}” had holes or loose faces, so it was rebuilt as a solid. Check small details.`, 5000), 50));
     this.view = new Viewport(this, document.getElementById('view'));
+    this.addAction({ label: 'Animations on or off', group: 'View', run: () => { const on = document.documentElement.dataset.motion === 'off'; setMotion(on); this.toast(on ? 'Animations on.' : 'Animations off: parts, menus and the camera change instantly.'); } });
     this.library = new Library(this);
     this.library.addTab('shapes', 'Shapes', shapesTab(this));
     for (const p of this.plugins) p(this);

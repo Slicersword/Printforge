@@ -171,7 +171,16 @@ const BOOL_ICON = {
   intersect: '<svg viewBox="0 0 24 24"><circle cx="9.5" cy="12" r="6"/><circle cx="14.5" cy="12" r="6"/><path d="M12 7.2a6 6 0 0 0 0 9.6 6 6 0 0 0 0-9.6z" fill="currentColor" stroke="none"/></svg>',
 };
 
+// The right panel re-renders on every edit; cross-fade it only when what it's about changes (another part, a tool,
+// another workspace), so typing in a field never flickers.
+let lastSubject = '';
 export function renderInspector(app) {
+  const el = document.getElementById('inspector'); const sel = app.scene.selected();
+  const subject = [app.mode, app.toolPanel ? 'tool' : '', sel.map((o) => o.id).join(',')].join('|');
+  renderInspectorBody(app);
+  if (subject !== lastSubject) { lastSubject = subject; el.classList.remove('swap'); void el.offsetWidth; el.classList.add('swap'); }
+}
+function renderInspectorBody(app) {
   const el = document.getElementById('inspector'); const s = app.scene; const sel = s.selected();
   if (app.mode === 'prepare' && app.prepPanel) { el.replaceChildren(...app.prepPanel()); return; }
   if (app.mode === 'preview' && app.previewPanel) { el.replaceChildren(...app.previewPanel().filter(Boolean)); return; }

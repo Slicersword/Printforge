@@ -549,3 +549,75 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .gclayers .gcl-label { font-size: 11px; color: var(--muted); }
 .gcodebar #gcMoves { flex: 1; }
 @media (max-width: 900px) { .gclayers { top: 70px; bottom: 140px; left: 8px; } }
+
+/* ==================================================================== motion
+   One idea, used everywhere something appears: it's printed. Menus, dialogs and toasts build up from the bottom in a
+   few whole layers with the hot nozzle line riding the top; new parts in the 3D view do the same (renderer.js).
+   Everything else is quiet: quick colour fades, a small press, thumbs that glide to the selected tab. */
+:root { --heat: #FF7A1A; --ease-out: cubic-bezier(.22, 1, .36, 1); --ease-spring: cubic-bezier(.3, 1.35, .5, 1); --t-fast: 120ms; --print: 210ms; }
+:root[data-theme="dark"] { --heat: #FF8A33; }
+
+button, .btn, input, select, textarea, .object-list li, .shape-btn, .gen-btn {
+  transition: background-color var(--t-fast), border-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast), transform var(--t-fast) var(--ease-out), opacity var(--t-fast);
+}
+button:active:not(:disabled), .btn:active:not(:disabled) { transform: scale(.965); }
+.shape-btn svg, .gen-btn svg { transition: transform .2s var(--ease-spring), color var(--t-fast); }
+.shape-btn:active svg, .gen-btn:active svg { transform: translateY(2px) scale(.94); } /* pressed into the plate */
+input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+h3, .brand-name, .tool-head h3 { font-family: var(--font-num); letter-spacing: .01em; }
+.brand-name { font-weight: 600; font-size: 18px; }
+
+/* the floating view chrome sits over the plate like frosted acrylic */
+.toolbar, .viewnav, .selbar, .layerbar, .gclayers { background: color-mix(in srgb, var(--panel) 95%, transparent); backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2); }
+
+/* sliding thumbs (motion.js) */
+.has-thumb { position: relative; }
+.has-thumb > button { position: relative; z-index: 1; }
+.thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; opacity: 0; }
+.thumb-ready > .thumb { transition: transform .4s var(--ease-spring), width .4s var(--ease-spring), height .25s var(--ease-out), opacity .2s; }
+.thumb-pill { background: var(--panel); border-radius: 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, .14), 0 0 0 1px var(--line); }
+.modes.has-thumb button[aria-selected="true"] { background: transparent; box-shadow: none; border-color: transparent; }
+.modes button[aria-selected="true"] { color: var(--ink); }
+.thumb-line { border-bottom: 2px solid var(--accent); }
+.tabs.has-thumb button[aria-selected="true"] { border-bottom-color: transparent; }
+
+/* printed in: whole layers from the bottom, the nozzle line on top */
+@keyframes pf-print { from { clip-path: inset(100% -20px -20px -20px); } to { clip-path: inset(-20px); } }
+@keyframes pf-nozzle { 0% { bottom: 0; opacity: 1; } 80% { opacity: 1; } 100% { bottom: calc(100% - 2px); opacity: 0; } }
+.dropdown-menu:not([hidden]), .ctx-menu, .modal[open], .toast.show { animation: pf-print var(--print) steps(6, end) both; }
+.modal[open] { animation-duration: 280ms; animation-timing-function: steps(9, end); }
+.dropdown-menu:not([hidden])::after, .ctx-menu::after, .modal[open]::after, .toast.show::after {
+  content: ''; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: 2px; background: var(--heat); box-shadow: 0 0 10px var(--heat);
+  bottom: 0; opacity: 0; pointer-events: none; animation: pf-nozzle var(--print) steps(6, end);
+}
+.modal[open]::after { animation-duration: 280ms; animation-timing-function: steps(9, end); }
+.modal::backdrop { background: rgba(10, 16, 22, .38); }
+.modal[open]::backdrop { animation: pf-fade .25s var(--ease-out); }
+@keyframes pf-fade { from { opacity: 0; } }
+.toast { border-radius: 10px; box-shadow: var(--shadow); padding: 9px 16px; transition: opacity .25s var(--ease-out), transform .25s var(--ease-out); }
+
+/* the right panel changes subject: a short cross-fade (not on every keystroke) */
+#inspector.swap { animation: pf-swap .24s var(--ease-out); }
+@keyframes pf-swap { from { opacity: 0; transform: translateY(3px); } }
+
+/* mobile drawers glide */
+@media (max-width: 900px) { .left, .right { transition: transform .32s var(--ease-out); } }
+
+/* loading: the mark prints itself as the engine loads */
+.print-mark { position: relative; width: 116px; height: 116px; }
+.print-mark svg { width: 100%; height: 100%; stroke: none; }
+.pm-plate { fill: var(--gold); }
+.pm-ghost { fill: none; stroke: var(--line-strong); stroke-width: .8; stroke-dasharray: 1.6 1.6; }
+.pm-part { fill: var(--accent); }
+.pm-layer { fill: rgba(0, 0, 0, .13); }
+.pm-nozzle { position: absolute; left: 27%; right: 27%; top: var(--nozzle, 78%); height: 2px; border-radius: 2px; background: var(--heat); box-shadow: 0 0 12px 1px var(--heat); transition: top .14s steps(1), opacity .3s; }
+.pm-nozzle::before { content: ''; position: absolute; top: -10px; left: 0; width: 11px; height: 9px; background: var(--ink); clip-path: polygon(0 0, 100% 0, 66% 100%, 34% 100%); animation: pf-sweep .42s ease-in-out infinite alternate; }
+@keyframes pf-sweep { to { left: calc(100% - 11px); } }
+.print-mark[data-done="1"] .pm-nozzle { opacity: 0; }
+.loading .load-track { display: none; }
+.loading p { font-family: var(--font-num); letter-spacing: .02em; }
+.loading.done { display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .4s var(--ease-out), visibility 0s .4s; }
+
+/* reduced motion: things simply appear */
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+html.calm *, html.calm *::before, html.calm *::after { animation: none !important; transition: none !important; }

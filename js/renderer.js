@@ -1,6 +1,7 @@
 // Minimal WebGL2 renderer tuned for CAD previews (no third-party engine).
 import { perspective, ortho, lookAt, mul, v3, invert, deg, clamp } from './math.js';
 
+const NO_GROW = new Float32Array([0, 0, 1]);
 const MESH_VS = `#version 300 es
 in vec3 aPos; in vec3 aNor;
 uniform mat4 uModel, uVP; uniform mat3 uNorm;
@@ -10,8 +11,10 @@ const MESH_FS = `#version 300 es
 precision highp float;
 in vec3 vN; in vec3 vW; out vec4 o;
 uniform vec3 uColor, uEye; uniform float uAlpha, uHole, uSel, uOverhang, uClip, uDark, uFlip; uniform vec3 uAccent; uniform vec4 uSec;
+uniform vec3 uGrow; // print-in: x = top of the printed layers (world z), y = 1 while printing, z = layer height
 void main(){
   if (vW.z > uClip) discard;
+  if (uGrow.y > 0.5 && vW.z > uGrow.x) discard; // not printed yet
   if (dot(vW, uSec.xyz) > uSec.w) discard; // section view: everything past the plane is cut away
   vec3 n = normalize(vN); vec3 V = normalize(uEye - vW);
   bool back = gl_FrontFacing == (uFlip > 0.5); if (back) n = -n;
@@ -27,6 +30,13 @@ void main(){
   float rim = pow(1.0-max(dot(n,V),0.0), 3.0); col += uSel*rim*uAccent*0.9;
   col = mix(col, uAccent, uSel*0.12);
   if (back) col = vec3(0.95,0.55,0.18)*(0.55+0.3*d); // cut face when clipping
+  if (uGrow.y > 0.5) {
+    // while printing: visible layer lines, a dim open interior, and the hot top layer under the nozzle
+    if (back) col = uColor*(0.32+0.2*d);
+    col *= 0.9 + 0.1*step(0.5, fract(vW.z/uGrow.z));
+    float heat = smoothstep(uGrow.x - 2.2*uGrow.z, uGrow.x, vW.z);
+    col = mix(col, vec3(1.0,0.56,0.16), heat*0.85) + vec3(0.35,0.12,0.0)*heat*heat;
+  }
   float a = uAlpha;
   if (uHole > 0.5) {
     float s = mod(gl_FragCoord.x + gl_FragCoord.y, 9.0);
@@ -43,8 +53,8 @@ const LINE_VS = `#version 300 es
 in vec3 aPos; uniform mat4 uModel, uVP; uniform vec3 uEyeL; uniform float uBias; out vec3 vW;
 void main(){ vec4 w=uModel*vec4(aPos,1.0); vW=w.xyz; vec3 tw = normalize(uEyeL - w.xyz); gl_Position=uVP*vec4(w.xyz + tw*max(uBias,0.0), 1.0); }`;
 const LINE_FS = `#version 300 es
-precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; uniform vec4 uSec; out vec4 o;
-void main(){ if (vW.z > uClip + 0.01) discard; if (dot(vW, uSec.xyz) > uSec.w + 0.01) discard; o=uColor; }`;
+precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; uniform vec4 uSec; uniform vec3 uGrow; out vec4 o;
+void main(){ if (vW.z > uClip + 0.01) discard; if (uGrow.y > 0.5 && vW.z > uGrow.x) discard; if (dot(vW, uSec.xyz) > uSec.w + 0.01) discard; o=uColor; }`;
 const CLINE_VS = `#version 300 es
 in vec3 aPos; in vec3 aCol; uniform mat4 uVP; out vec3 vC;
 void main(){ vC=aCol; gl_Position=uVP*vec4(aPos,1.0); }`;
@@ -168,6 +178,7 @@ export class Renderer {
       gl.uniformMatrix3fv(S.u.uNorm, false, it.normalMat);
       gl.uniform3fv(S.u.uColor, it.rgb); gl.uniform1f(S.u.uHole, it.hole ? 1 : 0); gl.uniform1f(S.u.uSel, it.selected ? 1 : 0);
       gl.uniform1f(S.u.uAlpha, alphaPass ? (it.alpha ?? 1) : 1); gl.uniform1f(S.u.uFlip, it.flip ? 1 : 0);
+      gl.uniform3fv(S.u.uGrow, it.grow || NO_GROW);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.pos); gl.enableVertexAttribArray(S.a.aPos); gl.vertexAttribPointer(S.a.aPos, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.nor); gl.enableVertexAttribArray(S.a.aNor); gl.vertexAttribPointer(S.a.aNor, 3, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, b.count);
@@ -191,7 +202,7 @@ export class Renderer {
     const edgePass = (hidden) => {
       for (const it of items) {
         const b = this.buffersFor(it.rd); if (!b.edges || it.hole) continue;
-        gl.uniformMatrix4fv(L.u.uModel, false, new Float32Array(it.model));
+        gl.uniformMatrix4fv(L.u.uModel, false, new Float32Array(it.model)); gl.uniform3fv(L.u.uGrow, it.grow || NO_GROW);
         const col = it.selected ? [...t.accent, 1] : lineCol;
         gl.uniform4fv(L.u.uColor, hidden ? [col[0], col[1], col[2], col[3] * 0.45] : col);
         gl.bindBuffer(gl.ARRAY_BUFFER, b.edges); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
@@ -202,7 +213,7 @@ export class Renderer {
     if (this.xray) { gl.disable(gl.DEPTH_TEST); gl.depthMask(false); edgePass(true); gl.depthMask(true); gl.enable(gl.DEPTH_TEST); }
     edgePass(false);
     const I = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9); gl.uniform4fv(L.u.uSec, [0, 0, 1, 1e9]);
+    gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9); gl.uniform4fv(L.u.uSec, [0, 0, 1, 1e9]); gl.uniform3fv(L.u.uGrow, NO_GROW);
     const bedLines = this._bedLines();
     for (const ln of [bedLines, ...(extras.lines || [])]) {
       if (!ln || !ln.data.length) continue;

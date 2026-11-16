@@ -14,11 +14,74 @@ export class Viewport {
     this.labels = [];
     this._initHandle();
     this._bind();
-    const loop = () => { if (this.needs) { this.needs = false; this._draw(); } requestAnimationFrame(loop); };
+    const loop = (now) => { if (this._animate(now)) this.needs = true; if (this.needs) { this.needs = false; this._draw(); } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
     new ResizeObserver(() => this.redraw()).observe(canvas);
   }
   redraw() { this.needs = true; }
+
+  // ------------------------------------------------------------ motion
+  // Everything that moves on its own lives here, driven by the frame loop: parts printing in, eased camera moves,
+  // orbit that glides on after you let go, and smoothed wheel zoom. Reduced motion turns all of it off.
+  get calm() { return !!(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.motion === 'off'); }
+  /** Start the print-in for objects the view hasn't seen before (not on first load). */
+  _noticeNew() {
+    const s = this.scene; const now = performance.now();
+    if (!this._seen) { this._seen = new Set(s.objects.map((o) => o.id)); this._prints = new Map(); return; }
+    const ids = new Set();
+    for (const o of s.objects) {
+      ids.add(o.id); if (this._seen.has(o.id)) continue; this._seen.add(o.id);
+      if (this.calm || this.mode !== 'design' || o.visible === false || this.dragging) continue;
+      const b = s.worldBox(o); if (!b) continue; const hgt = Math.max(0.5, b.max[2] - b.min[2]);
+      const layers = Math.round(clamp(hgt / 0.9, 14, 42)); const dur = clamp(420 + hgt * 5, 520, 950);
+      this._prints.set(o.id, { t0: now + Math.min(240, this._prints.size * 70), z0: b.min[2], z1: b.max[2] + 0.01, layers, dur, lh: (b.max[2] - b.min[2] + 0.01) / layers });
+    }
+    for (const id of this._seen) if (!ids.has(id)) this._seen.delete(id); // deleted: printing it again after undo is fine
+  }
+  _growOf(id, now) {
+    const pr = this._prints?.get(id); if (!pr) return null;
+    const p = (now - pr.t0) / pr.dur; if (p >= 1) { this._prints.delete(id); return null; }
+    if (p < 0) return [pr.z0 - 1, 1, pr.lh]; // waiting its turn: nothing printed yet
+    const e = 1 - Math.pow(1 - p, 1.35); const k = Math.max(1, Math.ceil(e * pr.layers)); // whole layers only
+    return [pr.z0 + pr.lh * k, 1, Math.max(0.2, pr.lh)];
+  }
+  /** One frame of motion; returns true while anything is still moving. */
+  _animate(now) {
+    let busy = false; const cam = this.r.cam;
+    if (this._prints?.size) busy = true;
+    const tw = this._tween;
+    if (tw) {
+      const p = Math.min(1, (now - tw.t0) / tw.dur); const e = p < 1 ? 1 - Math.pow(1 - p, 3) : 1;
+      const L = (a, b) => a + (b - a) * e;
+      cam.yaw = L(tw.a.yaw, tw.a.yaw + tw.dYaw); cam.pitch = L(tw.a.pitch, tw.b.pitch); cam.dist = L(tw.a.dist, tw.b.dist);
+      cam.target = tw.a.target.map((v, i) => L(v, tw.b.target[i]));
+      if (p >= 1) this._tween = null; busy = true;
+    }
+    const gl = this._glide;
+    if (gl && !this.state) {
+      const dt = Math.min(48, now - (gl.last || now)) / 16.7; gl.last = now; const k = Math.pow(0.9, dt);
+      cam.yaw -= gl.vx * dt; cam.pitch = clamp(cam.pitch + gl.vy * dt, -89.9, 89.9); gl.vx *= k; gl.vy *= k;
+      if (Math.hypot(gl.vx, gl.vy) < 0.02) this._glide = null; busy = true;
+    }
+    const z = this._zoom;
+    if (z) {
+      const nd = cam.dist + (z.dist - cam.dist) * 0.32;
+      if (z.p && cam.persp) { const f = 1 - nd / cam.dist; cam.target = v3.add(cam.target, v3.scale(v3.sub(z.p, cam.target), f)); }
+      cam.dist = nd; if (Math.abs(z.dist - cam.dist) < cam.dist * 0.002) this._zoom = null; busy = true;
+    }
+    return busy;
+  }
+  /** Run a camera change, then ease from where the camera was to where the change put it. */
+  easeCamera(change, dur = 340) {
+    const cam = this.r.cam; const snap = () => ({ yaw: cam.yaw, pitch: cam.pitch, dist: cam.dist, target: [...cam.target] });
+    this._glide = null; this._zoom = null; this._tween = null;
+    const a = snap(); change(); const b = snap();
+    if (this.calm) { this.redraw(); return; }
+    let dYaw = ((b.yaw - a.yaw) % 360 + 540) % 360 - 180; // the short way round
+    Object.assign(cam, { yaw: a.yaw, pitch: a.pitch, dist: a.dist, target: a.target });
+    this._tween = { a, b, dYaw, t0: performance.now(), dur }; this.redraw();
+  }
+  stopMotion() { this._tween = null; this._glide = null; this._zoom = null; }
 
   setTool(t) { if (this.tool === t) return; this.tool = t; this._face = null; this._hoverAxis = null; this.canvas.style.cursor = t === 'flatten' ? 'crosshair' : ''; this.app.emit?.('tool', t); this.redraw(); }
 
@@ -115,11 +178,13 @@ export class Viewport {
       const m = s.matrix(o);
       const it = { obj: o, rd: e.render, model: m, normalMat: normalMatrix(m), rgb: hex(o.hole ? '#9AA3AD' : o.color), hole: o.hole, selected: s.selection.has(o.id), flip: o.scale[0] * o.scale[1] * o.scale[2] < 0, centre: transformPoint(m, [0, 0, 0]) };
       if (pv?.ghost?.has(o.id)) { const role = pv.ghost.get(o.id); if (role === 'H') continue; /* replaced by the preview */ it.selected = false; if (role === 'B') { it.hole = true; } else { it.alpha = 0.16; } }
+      const g = this._growOf(o.id, performance.now()); if (g) it.grow = g;
       out.push(it);
     }
     return out;
   }
   _draw() {
+    this._noticeNew();
     const items = this.items(); const s = this.scene; this._items = items;
     const extras = { lines: [], handles: [] };
     const sel = s.selected();
@@ -270,7 +335,7 @@ export class Viewport {
     c.addEventListener('dblclick', (e) => { const h = this.pick(e.offsetX, e.offsetY); if (h) this.app.openEditor?.(h.obj); });
   }
   _down(e) {
-    this.canvas.focus(); this.canvas.setPointerCapture(e.pointerId);
+    this.canvas.focus(); this.canvas.setPointerCapture(e.pointerId); this._glide = null; this._tween = null;
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
     if (this.pointers.size === 2) { this._abortDrag(); this.state = { mode: 'touch2', ...this._touchInfo() }; return; }
     const x = e.offsetX, y = e.offsetY; const btn = e.pointerType === 'touch' ? 0 : e.button;
@@ -320,7 +385,7 @@ export class Viewport {
     const x = e.offsetX, y = e.offsetY, dx = x - st.lx, dy = y - st.ly; st.lx = x; st.ly = y;
     if (!st.moved && Math.hypot(x - st.x0, y - st.y0) > 3) st.moved = true;
     const cam = this.r.cam;
-    if (st.mode === 'orbit' && st.moved) { cam.yaw -= dx * 0.4; cam.pitch = clamp(cam.pitch + dy * 0.4, -89.9, 89.9); this.redraw(); }
+    if (st.mode === 'orbit' && st.moved) { cam.yaw -= dx * 0.4; cam.pitch = clamp(cam.pitch + dy * 0.4, -89.9, 89.9); st.vx = dx * 0.4; st.vy = dy * 0.4; st.vt = performance.now(); this.redraw(); }
     else if (st.mode === 'pan') { this._pan(dx, dy); }
     else if (st.mode === 'maybeDrag' && st.moved) {
       const s = this.scene;
@@ -342,6 +407,8 @@ export class Viewport {
   _up(e) {
     this.pointers.delete(e.pointerId);
     const st = this.state; if (!st) return;
+    // let a flicked orbit glide on and settle
+    if (st.mode === 'orbit' && st.moved && st.vt && performance.now() - st.vt < 70 && !this.calm && Math.hypot(st.vx, st.vy) > 0.6) this._glide = { vx: st.vx, vy: st.vy, last: 0 };
     if (st.mode === 'touch2') { if (this.pointers.size === 0) this.state = null; return; }
     if (st.edgeClick && !st.moved) { this.state = null; this.edgePick?.click(st.x0, st.y0, e.shiftKey || e.ctrlKey || e.metaKey); return; }
     if (st.measureClick && !st.moved) {
@@ -516,6 +583,8 @@ export class Viewport {
     e.preventDefault(); const cam = this.r.cam;
     const k = Math.exp(clamp(e.deltaY * (e.deltaMode === 1 ? 33 : 1), -200, 200) * 0.0012);
     const p = this.pick(e.offsetX, e.offsetY)?.point || this.planeHit(e.offsetX, e.offsetY, 0);
+    this._tween = null; this._glide = null;
+    if (!this.calm) { const base = this._zoom ? this._zoom.dist : cam.dist; this._zoom = { dist: clamp(base * k, 5, 6000), p }; this.redraw(); return; }
     const nd = clamp(cam.dist * k, 5, 6000);
     if (p && cam.persp) { const f = 1 - nd / cam.dist; cam.target = v3.add(cam.target, v3.scale(v3.sub(p, cam.target), f)); }
     cam.dist = nd; this.redraw();
@@ -533,9 +602,10 @@ export class Viewport {
     if (v === 'proj') { cam.persp = !cam.persp; this.redraw(); return cam.persp; }
     if (v === 'home') { this.fit(); return; }
     if (v === 'measure') { this.setMeasure(!this.measure); return; }
-    if (views[v]) { [cam.yaw, cam.pitch] = views[v]; this.fit(true); }
+    if (views[v]) this.easeCamera(() => { [cam.yaw, cam.pitch] = views[v]; this._fitNow(true); }, 420);
   }
-  fit(keep = true) {
+  fit(keep = true) { this.easeCamera(() => this._fitNow(keep)); }
+  _fitNow(keep = true) {
     const s = this.scene; const box = s.selection.size ? s.selectionBox() : s.selectionBox(s.objects.filter((o) => o.visible !== false));
     const b = this.r.bed.none ? { w: 200, d: 200 } : this.r.bed; // no plate: frame a 200 mm area when the scene is empty
     this.r.frame(box || { min: [-b.w / 2, -b.d / 2, 0], max: [b.w / 2, b.d / 2, 30] }, keep); this.redraw();
