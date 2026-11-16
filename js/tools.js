@@ -1,7 +1,9 @@
 // Transform tool bar (Move, Rotate, Scale, Lay on face, Cut, Boolean, Measure) and the Mesh Boolean tool.
 // Modelled on Bambu Studio's gizmo bar and its Mesh Boolean gizmo, and on PaliCAD's union / subtract / intersect.
 import { h, numField, row } from './ui.js';
-import { findEdges, filletEdges, edgeLabel } from './fillet.js';
+import { findEdges, edgeLabel } from './fillet.js';
+import { geo } from './geo.js';
+import { fromMan, toMan } from './geoops.js';
 import { K, worldManifold, renderData, free } from './kernel.js';
 import { hex } from './renderer.js';
 import { eulerMatrix, eulerFromMatrix, mul, fmt } from './math.js';
@@ -161,6 +163,18 @@ export function install(app) {
   app.on('change', () => { if (sec.on) applySec(); });
   bar.insertBefore(h('button', { 'data-act': 'section', title: 'Section view: cut through the model on X, Y or Z (X)', 'aria-label': 'Section view (X)', html: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M3 14l18-6" stroke-dasharray="2.5 2"/></svg><span>Section</span><kbd>X</kbd>', onclick: () => app.toggleSection() }), bar.querySelector('[data-act="measure"]'));
 
+  // ------------------------------------------------------------ thin walls: purple where a wall is thinner than two nozzle widths
+  app.toggleThin = (on = !app.view.thinWalls) => {
+    app.view.thinWalls = !!on; const b = bar.querySelector('[data-act="thin"]'); b?.classList.toggle('on', app.view.thinWalls); b?.setAttribute('aria-pressed', String(app.view.thinWalls));
+    app.view.redraw(); if (!on) return;
+    const lim = app.view.thinLimit(); app.toast(`Thin walls: checking… purple marks walls thinner than ${lim} mm (two ${lim / 2} mm nozzle widths).`, 2500);
+    const report = () => { const r = app.view.thinSummary(); if (!r || !app.view.thinWalls) return; app.off?.('thin', report);
+      app.toast(r.area ? `Thin walls: ${Math.round(r.area)} mm² thinner than ${lim} mm on ${r.parts} part${r.parts === 1 ? '' : 's'} (purple). Thicken them or they may print weak or not at all.` : `No walls thinner than ${lim} mm.`, 5000); };
+    app.on('thin', report); setTimeout(report, 50);
+  };
+  bar.insertBefore(h('button', { 'data-act': 'thin', 'aria-pressed': 'false', title: 'Thin walls: shade walls thinner than two nozzle widths in purple, while you design', 'aria-label': 'Thin walls', html: '<svg viewBox="0 0 24 24"><path d="M4 20V6h4v14M12 20V6h1.5v14" /><path d="M17 20V6h3v14" stroke-dasharray="2 2"/></svg><span>Thin walls</span>', onclick: () => app.toggleThin() }), bar.querySelector('[data-act="measure"]'));
+  app.addAction?.({ label: 'Thin walls (show walls thinner than 2 nozzle widths)', group: 'View', run: () => app.toggleThin() });
+
   // ------------------------------------------------------------ X-ray: hidden edges only when asked for
   app.toggleXray = (on = !app.view.r.xray) => {
     app.view.r.xray = !!on; bar.querySelector('[data-act="xray"]')?.classList.toggle('on', app.view.r.xray);
@@ -194,7 +208,8 @@ export function install(app) {
       item('Centre on the plate', '', centre), item('Drop to the plate', 'D', () => app.cmd('drop')), item('Lay on face', 'F', () => app.setTool('flatten')), item('Turn 90°', 'Shift R', () => app.cmd('rotZ')),
       sep(), item('Duplicate', mod('D'), () => app.cmd('duplicate')), item(one?.hole ? 'Make solid' : 'Make a hole', 'H', () => app.cmd('toggleHole')),
       one && !one.hole ? item('Fillet edges…', 'E', () => app.openFillet()) : null,
-      sel.length > 1 ? item('Group', mod('G'), () => app.cmd('group')) : null, sel.length > 1 ? item('Mesh boolean…', 'B', () => app.openBoolean()) : null,
+      item('Merge', mod('G'), () => app.cmd('merge'), { disabled: sel.length < 2 }), item('Unmerge', isMac ? '⇧⌘G' : 'Ctrl Shift G', () => app.cmd('unmerge')),
+      sel.length > 1 ? item('Mesh boolean…', 'B', () => app.openBoolean()) : null,
       one ? item('Cut in two…', 'C', () => app.openCut()) : null, one ? item('Texture…', '', () => app.openTexture?.()) : null,
       app.canMakeMany?.(one || {}) ? item('Make many at once…', '', () => app.makeMany(one)) : null,
       sep(), item('Hide', '', () => s.edit('hide', () => sel.forEach((o) => { o.visible = false; }))), item('Export selection as STL', '', () => app.cmd('export:sel-stl')),
@@ -273,46 +288,40 @@ export function install(app) {
     if (op === 'subtract' && (!A.length || !B.length)) return 'Subtract needs at least one part to keep and one to cut away.';
     return null;
   }
+  // The boolean runs in the background worker; the newest request wins, and Apply waits for it.
+  let boolSeq = 0, pendingBool = null;
   function compute() {
-    const bt = app.boolTool; if (!bt) return;
+    const bt = app.boolTool; if (!bt) return Promise.resolve();
     const list = members();
     const key = JSON.stringify([bt.op, bt.preview, list.map((m) => [m.o.id, m.role, m.o.pos, m.o.rot, m.o.scale, m.o.params, m.o.meshId, m.o.children?.length])]);
-    if (key === lastKey) return; releasePreview(); lastKey = key;
-    const err = check(bt.op, list); if (err) { result = { error: err }; return; }
-    const solids = new Map();
-    try {
-      for (const m of list) solids.set(m.o.id, worldManifold(m.o));
-      let mans = [];
-      if (bt.op === 'union') mans = [K.Manifold.union(list.map((m) => solids.get(m.o.id)))];
-      else if (bt.op === 'intersect') mans = [K.Manifold.intersection(list.map((m) => solids.get(m.o.id)))];
-      else {
-        const cutters = list.filter((m) => m.role === 'B').map((m) => solids.get(m.o.id));
-        const tool = cutters.length > 1 ? K.Manifold.union(cutters) : cutters[0];
-        mans = list.filter((m) => m.role === 'A').map((m) => solids.get(m.o.id).subtract(tool));
-        if (cutters.length > 1) free(tool);
-      }
+    if (key === lastKey) return pendingBool || Promise.resolve();
+    releasePreview(); lastKey = key;
+    const err = check(bt.op, list); if (err) { result = { error: err }; return Promise.resolve(); }
+    const mine = ++boolSeq; result = { busy: true };
+    const meshes = []; const roles = [];
+    try { for (const m of list) { const w = worldManifold(m.o); meshes.push(fromMan(w)); free(w); roles.push(m.role); } }
+    catch (e) { result = { error: `Boolean failed: ${e.message}. Check that the parts are closed solids.` }; return Promise.resolve(); }
+    pendingBool = geo('boolean', { op: bt.op, meshes, roles }).then((res) => {
+      if (mine !== boolSeq || !app.boolTool) return;
       const owners = bt.op === 'subtract' ? list.filter((m) => m.role === 'A').map((m) => m.o) : [list.find((m) => m.role === 'A')?.o || list[0].o];
-      const empty = mans.map((m) => m.isEmpty());
-      if (empty.every(Boolean)) {
-        mans.forEach(free);
-        result = { error: bt.op === 'intersect' ? 'No overlapping region found. Move the parts so they overlap.' : bt.op === 'subtract' ? 'Nothing is left: the cutters remove the whole part.' : 'The result came out empty.' };
-        return;
-      }
-      const vol = mans.reduce((t, m) => t + m.volume(), 0), tris = mans.reduce((t, m) => t + m.numTri(), 0);
+      const empty = res.map((r) => r.empty);
+      if (empty.every(Boolean)) { result = { error: bt.op === 'intersect' ? 'No overlapping region found. Move the parts so they overlap.' : bt.op === 'subtract' ? 'Nothing is left: the cutters remove the whole part.' : 'The result came out empty.' }; return; }
+      const mans = res.map((r) => (r.empty ? K.Manifold.cube([0, 0, 0]) : toMan(K, r.mesh)));
+      const vol = res.reduce((t, r) => t + r.vol, 0), tris = res.reduce((t, r) => t + r.tris, 0), parts = res.reduce((t, r) => t + r.parts, 0);
       const items = bt.preview ? mans.map((m, i) => {
         if (empty[i]) return null;
         const rd = renderData({ man: m, render: null }); const I4 = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
         return { rd, model: I4, normalMat: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), rgb: hex(owners[i]?.color || '#2F9C95'), hole: false, selected: true, centre: [0, 0, 0] };
       }).filter(Boolean) : [];
-      result = { mans, owners, empty, items, stats: { vol, tris, parts: mans.filter((m, i) => !empty[i]).reduce((t, m) => t + m.decompose().map((p) => (free(p), 1)).length, 0) } };
+      result = { mans, owners, empty, items, stats: { vol, tris, parts } };
       app.view.preview = bt.preview ? { items, ghost: new Map(list.map((m) => [m.o.id, bt.op === 'subtract' ? m.role : 'A'])) } : null;
-    } catch (e) {
-      result = { error: `Boolean failed: ${e.message}. Check that the parts are closed solids.` };
-    } finally { solids.forEach(free); }
+    }).catch((e) => { if (mine === boolSeq) result = { error: `Boolean failed: ${e.message}. Check that the parts are closed solids.` }; })
+      .finally(() => { if (mine === boolSeq) { pendingBool = null; app.refresh(); app.view.redraw(); } });
+    return pendingBool;
   }
 
-  function apply() {
-    const bt = app.boolTool; const s = app.scene; compute();
+  async function apply() {
+    const bt = app.boolTool; const s = app.scene; await compute(); if (!app.boolTool) return;
     if (!result || result.error) { app.toast(result?.error || 'Nothing to apply yet.'); return; }
     const list = members(); const n = list.length;
     const made = [];
@@ -358,10 +367,11 @@ export function install(app) {
       bt.op === 'subtract' && list.length > 1 ? h('button', { class: 'btn', style: { width: '100%' }, onclick: () => { for (const m of list) bt.roles.set(m.o.id, m.role === 'A' ? 'B' : 'A'); schedule(); app.refresh(); } }, 'Swap Keep and Cut away') : null,
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: bt.preview, onchange: (e) => { bt.preview = e.target.checked; lastKey = ''; schedule(); } }), 'Show the result in the view'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: bt.keep, onchange: (e) => { bt.keep = e.target.checked; } }), 'Keep the original parts (hidden)'),
-      result?.error ? h('div', { class: 'error-box' }, result.error)
+      result?.busy ? h('p', { class: 'note result working' }, 'Working it out in the background…')
+      : result?.error ? h('div', { class: 'error-box' }, result.error)
         : st ? h('p', { class: 'note result' }, `Result: ${st.parts} solid piece${st.parts === 1 ? '' : 's'}, ${fmt(st.vol / 1000, 2)} cm³, ${st.tris.toLocaleString()} triangles.`) : null,
       h('div', { class: 'actions' },
-        h('button', { class: 'btn primary wide', disabled: !!result?.error || !list.length, onclick: apply }, `Apply ${OPS[bt.op].label.toLowerCase()}`),
+        h('button', { class: 'btn primary wide', disabled: !!result?.error || !!result?.busy || !list.length, onclick: apply }, `Apply ${OPS[bt.op].label.toLowerCase()}`),
         h('button', { class: 'btn wide', onclick: closeBoolean }, 'Cancel')),
       h('p', { class: 'note' }, 'The result is a single mesh. To keep shapes editable, mark cutters as holes and Group them (Ctrl G) instead.'),
     ];
@@ -407,19 +417,23 @@ export function install(app) {
     if (hover) lines.push({ data: segs(withChain(hover)), color: [...app.view.r.theme.accent, 1], noDepth: true });
     app.view.extraLines = lines;
   }
-  function flCompute() {
-    const t = app.filletTool; if (!t || !fl?.man) return; flRelease(false); fl.error = null;
-    const list = fl.edges.filter((f) => t.edges.has(f.id));
-    if (!list.length) { app.view.redraw(); app.refresh(); return; }
-    if (!(t.r > 0)) { fl.error = 'Set a size bigger than 0.'; app.refresh(); return; }
+  // the rounding itself runs in the background worker; only the newest request's answer is shown
+  let flSeq = 0;
+  async function flCompute() {
+    const t = app.filletTool; if (!t || !fl?.man) return; const mine = ++flSeq; const F = fl;
+    const list = F.edges.filter((f) => t.edges.has(f.id));
+    if (!list.length) { flRelease(false); F.error = null; F.busy = false; app.view.redraw(); app.refresh(); return; }
+    if (!(t.r > 0)) { flRelease(false); F.error = 'Set a size bigger than 0.'; app.refresh(); return; }
+    F.busy = true; app.refresh();
     try {
-      const man = filletEdges(K, fl.man, list, t.r, t.type);
-      if (man.isEmpty()) throw new Error('nothing is left');
-      const parts = man.decompose(); const n = parts.length; parts.forEach(free);
-      const rd = renderData({ man, render: null }); const o = flTarget();
-      fl.result = { man, rd, parts: n, dv: man.volume() - fl.man.volume() };
+      F.mesh ||= fromMan(F.man);
+      const out = await geo('fillet', { mesh: F.mesh, edges: list, r: t.r, type: t.type });
+      if (mine !== flSeq || fl !== F || !app.filletTool) return; // a newer request (or Close) came first
+      flRelease(false); F.error = null; F.busy = false;
+      const man = toMan(K, out.mesh); const rd = renderData({ man, render: null }); const o = flTarget();
+      F.result = { man, rd, parts: out.parts, dv: out.dv };
       if (t.preview) app.view.preview = { items: [{ rd, model: new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), normalMat: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), rgb: hex(o?.color || '#2F9C95'), hole: false, selected: false, centre: [0, 0, 0] }], ghost: new Map([[t.id, 'H']]) };
-    } catch (e) { fl.error = `This rounding didn’t work: ${e.message}. Try a smaller size, or fewer edges at once.`; }
+    } catch (e) { if (mine !== flSeq || fl !== F) return; flRelease(false); F.busy = false; F.error = `This rounding didn’t work: ${e.message}. Try a smaller size, or fewer edges at once.`; }
     app.view.redraw(); app.refresh();
   }
   const flSchedule = () => { clearTimeout(fl?.timer); if (fl) fl.timer = setTimeout(flCompute, 60); };
@@ -457,8 +471,8 @@ export function install(app) {
   app.scene.on('change', () => { if (!app.filletTool) return; if (!flTarget()) { closeFillet(); return; } if (fl && fl.key !== flKey(flTarget())) { flPrepare(); flLines(null); flSchedule(); } });
   app.scene.on('select', () => { const t = app.filletTool; if (!t) return; const sel = app.scene.selected(); if (sel.length === 1 && sel[0].id !== t.id && !sel[0].hole) { closeFillet(); app.openFillet(); } });
   app.on('mode', () => { if (app.mode !== 'design') closeFillet(); });
-  function applyFillet() {
-    const t = app.filletTool; const o = flTarget(); flCompute();
+  async function applyFillet() {
+    const t = app.filletTool; const o = flTarget(); clearTimeout(fl?.timer); if (!fl?.result || fl.busy) await flCompute();
     if (!fl?.result) { app.toast(fl?.error || 'Select at least one edge first.'); return; }
     const s = app.scene; const mesh = fl.result.man.getMesh(); let made = null; const n = t.edges.size;
     s.edit('fillet edges', () => {
@@ -496,10 +510,11 @@ export function install(app) {
         : h('p', { class: 'note' }, 'No edges selected yet. Hover over the part: the edge under the pointer lights up.'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.preview, onchange: (e) => { t.preview = e.target.checked; flSchedule(); } }), 'Show the result in the view'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.keep, onchange: (e) => { t.keep = e.target.checked; } }), 'Keep the original part (hidden)'),
-      fl?.error ? h('div', { class: 'error-box' }, fl.error)
+      fl?.busy ? h('p', { class: 'note result working' }, 'Rounding in the background…')
+      : fl?.error ? h('div', { class: 'error-box' }, fl.error)
         : res ? h('p', { class: 'note result' }, `Result: ${res.dv < 0 ? 'removes' : 'adds'} ${fmt(Math.abs(res.dv), 1)} mm³${res.parts > 1 ? `, ${res.parts} separate pieces` : ''}. Outside edges are rounded off; inside corners are filled.`) : null,
       h('div', { class: 'actions' },
-        h('button', { class: 'btn primary wide', disabled: !res || !!fl?.error, onclick: applyFillet }, t.type === 'chamfer' ? 'Apply chamfer' : 'Apply fillet'),
+        h('button', { class: 'btn primary wide', disabled: !res || !!fl?.error || !!fl?.busy, onclick: applyFillet }, t.type === 'chamfer' ? 'Apply chamfer' : 'Apply fillet'),
         h('button', { class: 'btn wide', onclick: closeFillet }, 'Cancel')),
       h('p', { class: 'note' }, 'The result is a mesh, like a boolean. Where several rounded edges meet at a corner, the corner is rounded by each edge in turn (not a ball corner). Tip: round edges before scaling, and keep the size smaller than the faces next to the edge.'),
     ];

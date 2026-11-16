@@ -2,6 +2,8 @@
 import { Renderer, hex, normalMatrix } from './renderer.js';
 import { transformPoint, rayTri, rayAabb, v3, clamp, deg, fmt, eulerMatrix, eulerFromMatrix, mul } from './math.js';
 import { K, renderData } from './kernel.js';
+import { geo } from './geo.js';
+const THIN_RGB = [0.66, 0.3, 0.95]; // thin walls: purple, apart from the red of overhangs
 import { axisMap } from './ui.js';
 
 export class Viewport {
@@ -19,6 +21,7 @@ export class Viewport {
     new ResizeObserver(() => this.redraw()).observe(canvas);
   }
   redraw() { this.needs = true; }
+  get _thin() { return this.__thin || (this.__thin = new WeakMap()); }
 
   // ------------------------------------------------------------ motion
   // Everything that moves on its own lives here, driven by the frame loop: parts printing in, eased camera moves,
@@ -80,6 +83,30 @@ export class Viewport {
     let dYaw = ((b.yaw - a.yaw) % 360 + 540) % 360 - 180; // the short way round
     Object.assign(cam, { yaw: a.yaw, pitch: a.pitch, dist: a.dist, target: a.target });
     this._tween = { a, b, dYaw, t0: performance.now(), dur }; this.redraw();
+  }
+  /** Thin-wall overlay for one part's geometry: worked out in the background, then drawn in purple on top. */
+  _thinOverlay(rd, scale) {
+    const maxD = this.thinLimit(); const k = `${maxD}|${scale.map((v) => v.toFixed(4)).join(',')}`;
+    let byKey = this._thin.get(rd); if (!byKey) { byKey = new Map(); this._thin.set(rd, byKey); }
+    const have = byKey.get(k); if (have) return have === 'busy' ? null : have;
+    byKey.set(k, 'busy'); this._thinBusy = (this._thinBusy || 0) + 1;
+    geo('thickness', { P: rd.P, T: rd.T, scale: [...scale], maxD }).then((r) => { byKey.set(k, { pos: r.pos, nor: r.nor, edges: [], tris: r.tris, area: r.area }); })
+      .catch(() => byKey.set(k, { pos: new Float32Array(0), nor: new Float32Array(0), edges: [], tris: 0, area: 0 }))
+      .finally(() => { this._thinBusy--; this.redraw(); this.app.emit?.('thin'); });
+    return null;
+  }
+  thinLimit() { return 2 * (this.scene.settings.nozzle || 0.4); }
+  /** Total thin area across the visible parts (null while still working). */
+  thinSummary() {
+    if (this._thinBusy) return null; let area = 0, parts = 0; const k0 = `${this.thinLimit()}|`;
+    for (const o of this.scene.objects) { if (o.visible === false || o.hole) continue; const e = this.scene.geometry(o); const byKey = e && this._thin.get(e.render); const ov = byKey?.get(k0 + o.scale.map((v) => v.toFixed(4)).join(',')); if (ov && ov !== 'busy' && ov.area > 0.5) { area += ov.area; parts++; } }
+    return { area, parts };
+  }
+  /** The view cube turns with the camera (CSS 3D: world Z is up, the front face is world −Y). */
+  _syncCube() {
+    const el = this._cubeEl || (this._cubeEl = document.getElementById('vcCube')); if (!el) return; const cam = this.r.cam;
+    const k = `${cam.yaw.toFixed(2)},${cam.pitch.toFixed(2)}`; if (k === this._cubeKey) return; this._cubeKey = k;
+    el.style.transform = `translateZ(-60px) rotateX(${-cam.pitch}deg) rotateY(${-(cam.yaw + 90)}deg)`;
   }
   stopMotion() { this._tween = null; this._glide = null; this._zoom = null; }
 
@@ -180,11 +207,12 @@ export class Viewport {
       if (pv?.ghost?.has(o.id)) { const role = pv.ghost.get(o.id); if (role === 'H') continue; /* replaced by the preview */ it.selected = false; if (role === 'B') { it.hole = true; } else { it.alpha = 0.16; } }
       const g = this._growOf(o.id, performance.now()); if (g) it.grow = g;
       out.push(it);
+      if (this.thinWalls && !o.hole) { const ov = this._thinOverlay(e.render, o.scale); if (ov && ov.tris) out.push({ rd: ov, model: m, normalMat: it.normalMat, rgb: THIN_RGB, hole: false, selected: false, front: true, flip: it.flip, centre: it.centre, grow: it.grow }); }
     }
     return out;
   }
   _draw() {
-    this._noticeNew();
+    this._noticeNew(); this._syncCube();
     const items = this.items(); const s = this.scene; this._items = items;
     const extras = { lines: [], handles: [] };
     const sel = s.selected();

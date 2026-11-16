@@ -621,3 +621,34 @@ h3, .brand-name, .tool-head h3 { font-family: var(--font-num); letter-spacing: .
 /* reduced motion: things simply appear */
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 html.calm *, html.calm *::before, html.calm *::after { animation: none !important; transition: none !important; }
+
+/* Objects header: merge / unmerge */
+.obj-tools { display: flex; gap: 2px; }
+.obj-tools button { border: 1px solid transparent; background: none; border-radius: 6px; padding: 3px 5px; color: var(--muted); display: inline-flex; }
+.obj-tools button:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); border-color: var(--line); }
+.obj-tools button:disabled { opacity: .35; cursor: default; }
+.obj-tools svg { width: 16px; height: 16px; }
+.selbar button:disabled { opacity: .4; cursor: default; }
+.section-head h2 .count { margin-left: 4px; }
+
+/* ---- view cube: turns with the camera; click a face to glide there */
+.viewcube { position: absolute; top: 12px; right: 112px; width: 78px; height: 78px; perspective: 260px; z-index: 3; }
+.vc-cube { position: absolute; left: 14px; top: 14px; width: 50px; height: 50px; transform-style: preserve-3d; }
+.vc-face { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; font: 600 10.5px var(--font-num); color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 92%, transparent); backface-visibility: hidden; cursor: pointer; letter-spacing: .02em; }
+.vc-face:hover { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.vc-face:active { transform: none; }
+.vc-front { transform: translateZ(25px); } .vc-back { transform: rotateY(180deg) translateZ(25px); }
+.vc-right { transform: rotateY(90deg) translateZ(25px); } .vc-left { transform: rotateY(-90deg) translateZ(25px); }
+.vc-top { transform: rotateX(90deg) translateZ(25px); color: var(--ink); } .vc-bottom { transform: rotateX(-90deg) translateZ(25px); }
+.vc-front:hover { transform: translateZ(25px); } .vc-back:hover { transform: rotateY(180deg) translateZ(25px); }
+.vc-right:hover { transform: rotateY(90deg) translateZ(25px); } .vc-left:hover { transform: rotateY(-90deg) translateZ(25px); }
+.vc-top:hover { transform: rotateX(90deg) translateZ(25px); } .vc-bottom:hover { transform: rotateX(-90deg) translateZ(25px); }
+.vc-iso { position: absolute; right: -2px; bottom: -4px; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 0 6px; font: 600 10.5px var(--font-num); color: var(--muted); }
+.vc-iso:hover { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+@media (max-width: 900px) { .viewcube { display: none; } }
+
+/* background work in progress */
+.note.working { display: flex; align-items: center; gap: 8px; }
+.note.working::before { content: ''; width: 14px; height: 2px; border-radius: 2px; background: var(--heat); box-shadow: 0 0 8px var(--heat); animation: pf-work 0.9s ease-in-out infinite alternate; }
+@keyframes pf-work { from { transform: translateX(-3px); opacity: .5; } to { transform: translateX(3px); opacity: 1; } }

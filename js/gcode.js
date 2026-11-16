@@ -34,10 +34,10 @@ export async function parseGcode(text, { onProgress, onPartial } = {}) {
   let x = 0, y = 0, z = 0, e = 0, f = 1500; let absXYZ = true, absE = true, unit = 1;
   let type = FIDX.other; let layerZ = null;
   // Segments: x0 y0 z0 x1 y1 z1, plus type, layer, feed, extrude flag.
-  let cap = 1 << 16; let seg = new Float32Array(cap * 6); let meta = new Float32Array(cap * 3); let ext = new Uint8Array(cap); let n = 0;
+  let cap = 1 << 16; let seg = new Float32Array(cap * 6); let meta = new Float32Array(cap * 3); let ext = new Uint8Array(cap); let ef = new Float32Array(cap); let n = 0; let curDe = 0; // ef: filament pushed (mm) per segment
   const layers = []; // z per layer
   const info = { slicer: '', time: 0, filamentMm: 0, filamentG: 0, eTotal: 0, timeEst: 0, typesSeen: new Set() };
-  const grow = () => { cap *= 2; const s2 = new Float32Array(cap * 6); s2.set(seg); seg = s2; const m2 = new Float32Array(cap * 3); m2.set(meta); meta = m2; const e2 = new Uint8Array(cap); e2.set(ext); ext = e2; };
+  const grow = () => { cap *= 2; const s2 = new Float32Array(cap * 6); s2.set(seg); seg = s2; const m2 = new Float32Array(cap * 3); m2.set(meta); meta = m2; const e2 = new Uint8Array(cap); e2.set(ext); ext = e2; const f2 = new Float32Array(cap); f2.set(ef); ef = f2; };
   const push = (x0, y0, z0, x1, y1, z1, extr) => {
     if (n >= cap) grow();
     const o = n * 6; seg[o] = x0; seg[o + 1] = y0; seg[o + 2] = z0; seg[o + 3] = x1; seg[o + 4] = y1; seg[o + 5] = z1;
@@ -45,11 +45,11 @@ export async function parseGcode(text, { onProgress, onPartial } = {}) {
       if (layerZ === null || Math.abs(z1 - layerZ) > 1e-4) { layerZ = z1; layers.push(z1); }
       info.typesSeen.add(type);
     }
-    meta[n * 3] = type; meta[n * 3 + 1] = Math.max(0, layers.length - 1); meta[n * 3 + 2] = f; ext[n] = extr ? 1 : 0;
+    meta[n * 3] = type; meta[n * 3 + 1] = Math.max(0, layers.length - 1); meta[n * 3 + 2] = f; ext[n] = extr ? 1 : 0; ef[n] = extr ? curDe : 0;
     info.timeEst += Math.hypot(x1 - x0, y1 - y0, z1 - z0) / Math.max(f / 60, 1); n++;
   };
   const lines = text.split('\n'); const CHUNK = 60000; let shown = false;
-  const snap = () => ({ seg: seg.subarray(0, n * 6), meta: meta.subarray(0, n * 3), ext: ext.subarray(0, n), count: n, layers: layers.slice(), info, partial: true });
+  const snap = () => ({ seg: seg.subarray(0, n * 6), meta: meta.subarray(0, n * 3), ext: ext.subarray(0, n), ef: ef.subarray(0, n), count: n, layers: layers.slice(), info, partial: true });
   for (let li = 0; li < lines.length; li++) {
     if (li && li % CHUNK === 0) {
       onProgress?.(li / lines.length);
@@ -95,16 +95,16 @@ export async function parseGcode(text, { onProgress, onPartial } = {}) {
       let a0 = Math.atan2(y - cy, x - cx), a1 = Math.atan2(ny - cy, nx - cx);
       if (g === 2) { while (a1 >= a0) a1 -= Math.PI * 2; } else { while (a1 <= a0) a1 += Math.PI * 2; }
       const steps = Math.max(4, Math.min(128, Math.ceil(Math.abs(a1 - a0) * r / 0.8)));
-      let px = x, py = y, pz = z;
+      let px = x, py = y, pz = z; curDe = de / steps;
       for (let i = 1; i <= steps; i++) {
         const t = i / steps; const a = a0 + (a1 - a0) * t;
         const qx = i === steps ? nx : cx + Math.cos(a) * r, qy = i === steps ? ny : cy + Math.sin(a) * r, qz = z + (nz - z) * t;
         push(px, py, pz, qx, qy, qz, extr); px = qx; py = qy; pz = qz;
       }
-    } else push(x, y, z, nx, ny, nz, extr);
+    } else { curDe = de; push(x, y, z, nx, ny, nz, extr); }
     x = nx; y = ny; z = nz;
   }
-  return { seg: seg.subarray(0, n * 6), meta: meta.subarray(0, n * 3), ext: ext.subarray(0, n), count: n, layers, info };
+  return { seg: seg.subarray(0, n * 6), meta: meta.subarray(0, n * 3), ext: ext.subarray(0, n), ef: ef.subarray(0, n), count: n, layers, info };
 }
 function params(line) {
   const out = {}; const re = /([A-Za-z])\s*(-?\d*\.?\d+(?:[eE][-+]?\d+)?)/g; let m; let first = true;
@@ -120,6 +120,7 @@ function header(c, info) {
   let m;
   if ((m = /^time:\s*(\d+)/i.exec(c))) info.time = +m[1];
   else if ((m = /(estimated printing time(?: \(normal mode\))?|total estimated time|print time)\s*[:=]\s*([\dhmsd :]+)/i.exec(c))) { const t = dur(m[2]); if (t) info.time = t; }
+  if ((m = /filament_diameter\s*=\s*([\d.]+)/i.exec(c))) info.filDia = +m[1];
   if ((m = /filament used \[mm\]\s*=\s*([\d.]+)/i.exec(c))) info.filamentMm = +m[1];
   else if ((m = /filament used:\s*([\d.]+)\s*m\b/i.exec(c))) info.filamentMm = +m[1] * 1000;
   else if ((m = /total filament length \[mm\]\s*[:=]\s*([\d.]+)/i.exec(c))) info.filamentMm = +m[1];
@@ -180,6 +181,19 @@ export function install(app) {
     const showIdx = new Set([...st.show].map((id) => FIDX[id]));
     const fmin = [], fmax = []; let fLo = Infinity, fHi = 0;
     if (st.colorBy === 'speed') for (let i = 0; i < d.count; i++) if (d.ext[i]) { const f = d.meta[i * 3 + 2]; fLo = Math.min(fLo, f); fHi = Math.max(fHi, f); }
+    // volumetric flow (mm³/s) = filament cross-section × filament pushed ÷ time for the move
+    const fa = Math.PI * ((d.info.filDia || 1.75) / 2) ** 2; const flowOf = (i) => { const o = i * 6; const L = Math.hypot(d.seg[o + 3] - d.seg[o], d.seg[o + 4] - d.seg[o + 1], d.seg[o + 5] - d.seg[o + 2]); const t = L / Math.max(d.meta[i * 3 + 2] / 60, 0.1); return t > 0 && d.ef ? (d.ef[i] * fa) / t : 0; };
+    let qLo = 0, qHi = 1, layerT = null, tLo = 0, tHi = 1;
+    if (st.colorBy === 'flow') {
+      const vals = []; for (let i = 0; i < d.count; i += Math.max(1, Math.floor(d.count / 200000))) if (d.ext[i]) vals.push(flowOf(i));
+      vals.sort((a, b) => a - b); qLo = vals[Math.floor(vals.length * 0.02)] || 0; qHi = vals[Math.floor(vals.length * 0.995)] || 1; st.flowMax = vals[vals.length - 1] || 0;
+    }
+    if (st.colorBy === 'layertime') { // every move counts, travel included: it's the time the layer has to cool
+      layerT = new Float32Array(d.layers.length);
+      for (let i = 0; i < d.count; i++) { const o = i * 6; const L = Math.hypot(d.seg[o + 3] - d.seg[o], d.seg[o + 4] - d.seg[o + 1], d.seg[o + 5] - d.seg[o + 2]); layerT[d.meta[i * 3 + 1]] += L / Math.max(d.meta[i * 3 + 2] / 60, 1); }
+      const sorted = [...layerT].sort((a, b) => a - b); tLo = sorted[0] || 0; tHi = sorted[Math.floor(sorted.length * 0.98)] || 1; st.layerTimes = layerT;
+    }
+    st.flowRange = [qLo, qHi]; st.timeRange = [tLo, tHi];
     void fmin; void fmax;
     const rgb = FEATURES.map((f) => hex(f.color));
     const nL = d.layers.length; const ex = { pos: [], col: [], starts: new Int32Array(nL + 1) }; const tr = { pos: [], starts: new Int32Array(nL + 1) };
@@ -195,6 +209,8 @@ export function install(app) {
         while (lastL < L) { lastL++; ex.starts[lastL] = ie * 2; }
         let c;
         if (st.colorBy === 'speed') { const tt = fHi > fLo ? (d.meta[i * 3 + 2] - fLo) / (fHi - fLo) : 0.5; c = ramp(tt); }
+        else if (st.colorBy === 'flow') c = ramp(Math.max(0, Math.min(1, (flowOf(i) - qLo) / Math.max(1e-6, qHi - qLo))));
+        else if (st.colorBy === 'layertime') c = ramp(1 - Math.max(0, Math.min(1, (layerT[L] - tLo) / Math.max(1e-6, tHi - tLo)))); // short layers (hot) are red
         else c = rgb[ti];
         const shade = L % 2 ? 0.86 : 1; // alternate layers slightly so they read as layers
         for (let k = 0; k < 2; k++) { const q = ie * 6 + k * 3; pe[q] = d.seg[o + k * 3] + ox; pe[q + 1] = d.seg[o + k * 3 + 1] + oy; pe[q + 2] = d.seg[o + k * 3 + 2]; cc[q] = c[0] * shade; cc[q + 1] = c[1] * shade; cc[q + 2] = c[2] * shade; }
@@ -275,11 +291,15 @@ export function install(app) {
         stat(fmtTime(time), i.time ? 'print time (slicer)' : 'print time (rough)'), stat(`${fmt(fil / 1000, 2)} m`, `filament · about ${fmt(grams, grams < 10 ? 1 : 0)} g`)),
       tooBig ? h('div', { class: 'error-box' }, `This file is bigger than the ${bed.w}×${bed.d}×${bed.h} mm plate selected in Design. Check it was sliced for your printer.`) : null,
       h('fieldset', {}, h('legend', {}, 'Colour by'),
-        h('div', { class: 'seg' }, ...[['feature', 'Feature'], ['speed', 'Speed']].map(([v, l]) => h('button', { 'aria-pressed': String(st.colorBy === v), onclick: () => { st.colorBy = v; build(); app.refresh(); } }, l)))),
+        h('div', { class: 'seg' }, ...[['feature', 'Feature'], ['speed', 'Speed'], ['flow', 'Flow'], ['layertime', 'Layer time']].map(([v, l]) => h('button', { 'aria-pressed': String(st.colorBy === v), onclick: () => { st.colorBy = v; build(); app.refresh(); } }, l)))),
       st.colorBy === 'feature'
         ? h('fieldset', {}, h('legend', {}, 'Features'), h('ul', { class: 'legend' }, ...legend.map(({ f, len }) => h('li', {},
           h('label', {}, h('input', { type: 'checkbox', checked: st.show.has(f.id), onchange: (e) => { if (e.target.checked) st.show.add(f.id); else st.show.delete(f.id); build(); } }),
             h('span', { class: 'chip', style: { background: f.color } }), h('span', { class: 'nm' }, f.label), h('span', { class: 'pct' }, `${Math.max(0.1, len / total * 100).toFixed(len / total < 0.1 ? 1 : 0)}%`))))))
+        : st.colorBy === 'flow' ? h('fieldset', {}, h('legend', {}, 'Volumetric flow'), h('div', { class: 'ramp' }), h('div', { class: 'ramp-labels' }, h('span', {}, `${fmt(st.flowRange[0], 1)} mm³/s`), h('span', {}, `${fmt(st.flowRange[1], 1)} mm³/s`)),
+          h('p', { class: 'note' }, `Peak ${fmt(st.flowMax || 0, 1)} mm³/s. A standard hotend melts about 12–15 mm³/s of PLA; high-flow hotends 25 or more. Red above what yours can melt means thin, weak or skipped extrusion there.`))
+        : st.colorBy === 'layertime' ? (() => { const lt = st.layerTimes || []; const short = [...lt].filter((t) => t < (st.minLayer || 8)).length; return h('fieldset', {}, h('legend', {}, 'Layer time'), h('div', { class: 'ramp' }), h('div', { class: 'ramp-labels' }, h('span', {}, `${fmt(st.timeRange[1], 0)} s (cool)`), h('span', {}, `${fmt(st.timeRange[0], 1)} s (hot)`)),
+          h('p', { class: 'note' }, short ? `${short} layer${short === 1 ? '' : 's'} print in under ${st.minLayer || 8} s. Small tops and tips like these can sag or curl because the plastic hasn't cooled; slow them down or print two copies.` : `Every layer takes at least ${st.minLayer || 8} s, so each one has time to cool.`)); })()
         : h('fieldset', {}, h('legend', {}, 'Speed'), h('div', { class: 'ramp' }), h('div', { class: 'ramp-labels' }, h('span', {}, `${fmt(st.speedRange[0] / 60, 0)} mm/s`), h('span', {}, `${fmt(st.speedRange[1] / 60, 0)} mm/s`))),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: st.travel, onchange: (e) => { st.travel = e.target.checked; build(); } }), 'Show travel moves'),
       openBtn,

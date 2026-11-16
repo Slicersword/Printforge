@@ -7,6 +7,7 @@ import { Viewport } from './viewport.js';
 import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row, IS_MAC, keyName } from './ui.js';
 import { PRINTERS, printerById } from './printers.js';
 import { installMotion, printProgress, setMotion } from './motion.js';
+import { makeShareLink, hasSharedDesign, readSharedDesign, clearSharedHash } from './share.js';
 const UNLIMITED = 20000; // mm: the work area with no plate (20 m each way, past the far edge of the view)
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
 import { eulerMatrix, transformDir, fmt, eulerFromMatrix, mul, transformPoint } from './math.js';
@@ -18,6 +19,7 @@ class App {
   constructor() { this.listeners = {}; this.mode = 'design'; this.lockRatio = false; this.plugins = []; this.actions = []; }
   addAction(a) { this.actions.push(a); }
   on(e, f) { (this.listeners[e] ||= []).push(f); }
+  off(e, f) { const l = this.listeners[e]; if (l) this.listeners[e] = l.filter((x) => x !== f); }
   emit(e, ...a) { (this.listeners[e] || []).forEach((f) => f(...a)); }
 
   async start() {
@@ -46,6 +48,8 @@ class App {
     // restore the last workspace (IndexedDB, or the older localStorage copy)
     const saved = await loadCurrent();
     if (saved) { try { this.scene.load(saved); this.applyPrinter(); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { this.toast('Your last design couldn’t be restored. Earlier versions are in Help → Recover.', 5000); } }
+    if (hasSharedDesign()) await this.openSharedLink();
+    window.addEventListener('hashchange', () => { if (hasSharedDesign()) this.openSharedLink(); });
     this._saveState('saved');
     this._changed(); this._selChanged();
     this.view.fit();
@@ -234,7 +238,7 @@ class App {
   }
   openEditor(o) {
     const def = o.type === 'shape' && this.editors?.[o.kind];
-    if (def) def(o); else if (o.type === 'group') this.toast('Ungroup (Ctrl+Shift+G) to edit the shapes inside.');
+    if (def) def(o); else if (o.type === 'group') this.toast('Unmerge (Ctrl+Shift+G) to edit the parts inside.');
   }
 
   // ------------------------------------------------------------ commands
@@ -242,12 +246,22 @@ class App {
     const s = this.scene; const ids = [...s.selection];
     const need = () => { if (!ids.length) { this.toast('Select something first.'); return false; } return true; };
     switch (name) {
+      case 'share': this.shareLink(); break;
       case 'undo': s.undo(); break;
       case 'redo': s.redo(); break;
       case 'delete': if (need()) s.remove(ids); break;
       case 'duplicate': if (need()) s.duplicate(ids); break;
       case 'group': if (ids.length < 2) this.toast('Select two or more objects to group (Shift+click).'); else s.group(ids); break;
       case 'ungroup': s.ungroup(ids); break;
+      // Merge / Unmerge, as in Bambu Studio: merge = group; unmerge = ungroup a merged object, or split a single
+      // mesh that holds several separate pieces into one object per piece
+      case 'merge': if (ids.length < 2) this.toast('Select two or more parts to merge (Shift+click them in the view or the Objects list).'); else { s.group(ids); this.toast(`Merged ${ids.length} parts into one object. Unmerge (Ctrl+Shift+G) splits it again.`); } break;
+      case 'unmerge': {
+        if (!need()) break; const sel = s.selected(); const groups = sel.filter((o) => o.type === 'group'), rest = sel.filter((o) => o.type !== 'group');
+        if (groups.length) { const n = groups.reduce((t, g) => t + g.children.length, 0); s.ungroup(groups.map((g) => g.id)); this.toast(`Unmerged into ${n} parts.`); }
+        if (rest.length) this.split(rest.map((o) => o.id), !groups.length);
+        break;
+      }
       case 'toggleHole': if (need()) { const all = s.selected().every((o) => o.hole); s.edit(all ? 'make solid' : 'make hole', () => s.selected().forEach((o) => { o.hole = !all; })); } break;
       case 'rotZ': if (need()) this.rotateBy(s.selected(), 2, 90); break;
       case 'drop': if (need()) s.dropToPlate(); break;
@@ -273,7 +287,7 @@ class App {
         else if (name.startsWith('quick:')) { const k = name.slice(6); const a = this.actions.find((x) => x.label === k); if (a) a.run(); else this.addShape(k); }
     }
   }
-  split(ids) {
+  split(ids, say = true) {
     const s = this.scene; let made = 0;
     s.edit('split into parts', () => {
       for (const id of ids) {
@@ -284,7 +298,7 @@ class App {
       }
       s.selection.clear();
     });
-    this.toast(made ? `Split into ${made} parts` : 'This object is already a single part.');
+    if (made) this.toast(`Split into ${made} parts`); else if (say) this.toast('This is already one solid piece, so there’s nothing to unmerge. Use Cut in two (C) to split it with a plane.');
     s.emit('select');
   }
   /** Cut an object in two with a plane across one world axis. */
@@ -375,6 +389,28 @@ class App {
       else if (kind === 'parts') { const files = []; const used = {}; for (const p of parts) { let n = p.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'part'; used[n] = (used[n] || 0) + 1; if (used[n] > 1) n += `-${used[n]}`; files.push({ name: `${n}.stl`, data: new Uint8Array(await toSTL([p], n).arrayBuffer()) }); } download(await zip(files), `${base}-parts.zip`); }
       this.toast(`Exported ${parts.length} part${parts.length > 1 ? 's' : ''}`);
     } finally { parts.forEach((p) => free(p.man)); }
+  }
+  /** Open the design carried in the address (#d=…); keep what was on screen as a Recover version. */
+  async openSharedLink() {
+    try {
+      const doc = await readSharedDesign(); const prev = this.scene.objects.length ? this.scene.toJSON() : null;
+      this.scene.load(doc); if (prev) snapshot(prev, 'before shared link').catch(() => {});
+      this.applyPrinter(); this.view.fit(false); clearSharedHash();
+      this.toast(`Opened the shared design “${this.scene.name || 'Untitled'}”.${prev ? ' Your previous design is in Help → Recover.' : ''}`, 4500);
+    } catch (e) { clearSharedHash(); this.toast(`This share link is damaged or cut short, so it couldn’t be opened (${e.message}).`, 6000); }
+  }
+  async shareLink() {
+    const s = this.scene; if (!s.objects.length) { this.toast('Add something to the plate first, then share it.'); return; }
+    let url; try { url = await makeShareLink(s.toJSON()); } catch (e) { this.toast(`Couldn’t make a link: ${e.message}`, 5000); return; }
+    const kb = url.length / 1024; const hasMesh = s.objects.some(function m(o) { return o.type === 'mesh' || (o.children || []).some(m); });
+    let copied = false; try { await navigator.clipboard.writeText(url); copied = true; } catch { /* not allowed: the dialog has the link */ }
+    const input = h('input', { type: 'text', value: url, readonly: true, 'aria-label': 'Share link', onfocus: (e) => e.target.select(), style: { fontFamily: 'var(--font-num)' } });
+    const warn = kb > 64 ? h('p', { class: 'note', style: { color: 'var(--warn)' } }, `This link is long (${Math.round(kb)} KB)${hasMesh ? ' because it carries imported or applied meshes' : ''}. Some chat apps and email cut long links; if it doesn’t open for them, send the project file (Save) instead.`) : null;
+    this.modal('Share link',
+      h('p', {}, copied ? 'Copied. Anyone who opens this link gets the design, ready to edit. Nothing is uploaded: the whole design is inside the link.' : 'Anyone who opens this link gets the design, ready to edit. Nothing is uploaded: the whole design is inside the link.'),
+      input, warn,
+      h('p', { class: 'note' }, `${s.objects.length} object${s.objects.length === 1 ? '' : 's'}, ${kb < 1 ? '<1' : Math.round(kb)} KB. Shapes and generator parts stay editable; the link is a snapshot, so later changes need a new link.`),
+      h('div', { class: 'modal-foot' }, h('button', { class: 'btn primary', onclick: async () => { try { await navigator.clipboard.writeText(url); this.toast('Link copied'); } catch { input.focus(); input.select(); document.execCommand?.('copy'); this.toast('Link copied'); } } }, 'Copy link')));
   }
   saveProject() {
     const s = this.scene; const data = JSON.stringify(s.toJSON());
@@ -479,8 +515,8 @@ class App {
   showHelp() {
     const keys = [['Orbit', 'Left-drag empty space / right-drag'], ['Pan', 'Middle-drag / Shift+right-drag'], ['Zoom', 'Scroll / pinch'], ['Select more', 'Shift+click'], ['Duplicate while dragging', 'Alt+drag'], ['Free move (no snap)', 'Ctrl+drag'],
       ['Move tool', 'M'], ['Rotate tool', 'R'], ['Scale tool', 'S'], ['Lay on face', 'F'], ['Cut in two', 'C'], ['Mesh boolean', 'B'], ['Measure', 'U'], ['Fit view', 'Z'],
-      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90° on the plate', 'Shift+R'], ['Drop to plate', 'D'],
-      ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
+      ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Merge / unmerge (group, split)', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90° on the plate', 'Shift+R'], ['Drop to plate', 'D'],
+      ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Views', '1 front · 2 back · 3 right · 4 left · 5 top · 6 bottom · 7 iso · 9 persp'],
       ['Search every tool', 'Ctrl+K'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E'],
       ['Fillet or chamfer edges', 'E'], ['Section view', 'X'], ['Focus on the model', '\\'], ['Hide library / properties', '[ / ]'], ['Actions menu', 'Right-click · Shift+F10']];
     const d = this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, keyName(b))))),
@@ -553,7 +589,7 @@ class App {
     if (mod && k === 'z') return go(() => (e.shiftKey ? s.redo() : s.undo()));
     if (mod && k === 'y') return go(() => s.redo());
     if (mod && k === 'd') return go(() => this.cmd('duplicate'));
-    if (mod && k === 'g') return go(() => this.cmd(e.shiftKey ? 'ungroup' : 'group'));
+    if (mod && k === 'g') return go(() => this.cmd(e.shiftKey ? 'unmerge' : 'merge'));
     if (mod && k === 'a') return go(() => this.cmd('selectAll'));
     if (mod && k === 's') return go(() => this.cmd('save'));
     if (mod && k === 'o') return go(() => this.cmd('open'));
@@ -583,8 +619,8 @@ class App {
     if (k === 'g') return go(() => { const order = ['move', 'rotate', 'scale']; this.view.setTool(order[(order.indexOf(this.view.tool) + 1) % 3]); this.toast(`${this.view.tool[0].toUpperCase()}${this.view.tool.slice(1)} tool`); });
     if (k === 'd') return go(() => this.cmd('drop'));
     if (k === '?') return go(() => this.showHelp());
-    const views = { 7: 'top', 1: 'front', 3: 'right', 0: 'iso' }; if (views[k]) return go(() => this.view.setView(views[k]));
-    if (k === '5') return go(() => { const r = this.view.setView('proj'); document.getElementById('projBtn').querySelector('span').textContent = r ? 'Persp' : 'Ortho'; });
+    const views = { 1: 'front', 2: 'back', 3: 'right', 4: 'left', 5: 'top', 6: 'bottom', 7: 'iso', 0: 'iso' }; if (views[k]) return go(() => this.view.setView(views[k]));
+    if (k === '9') return go(() => { const r = this.view.setView('proj'); document.getElementById('projBtn').querySelector('span').textContent = r ? 'Persp' : 'Ortho'; });
     const step = (e.shiftKey ? 10 : 1) * (s.settings.snap || 1);
     const nud = { arrowleft: [-step, 0, 0], arrowright: [step, 0, 0], arrowup: [0, step, 0], arrowdown: [0, -step, 0], pageup: [0, 0, step], pagedown: [0, 0, -step] }[k];
     if (nud && sel.length) return go(() => {

@@ -129,6 +129,8 @@ export function shapesTab(app) {
 export function renderOutline(app) {
   const ul = document.getElementById('objectList'); const s = app.scene;
   document.getElementById('objCount').textContent = s.objects.length ? String(s.objects.length) : '';
+  const sl = s.selected(); const mb = document.getElementById('objMerge'), ub = document.getElementById('objUnmerge');
+  if (mb) { mb.disabled = sl.length < 2 || app.mode !== 'design'; ub.disabled = !sl.length || app.mode !== 'design'; }
   if (!s.objects.length) { ul.replaceChildren(h('li', { class: 'empty' }, 'Nothing on the plate yet.')); return; }
   const eyeOn = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
   const eyeOff = '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.6 6.6C3.8 8.3 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/></svg>';
@@ -267,7 +269,7 @@ function multiPanel(app, sel) {
     h('h3', {}, `${sel.length} objects selected`),
     h('p', { class: 'note' }, holes ? `${holes} hole(s) will cut the ${sel.length - holes} solid(s) when grouped.` : 'Group them to merge into one part.'),
     h('div', { class: 'actions' },
-      h('button', { class: 'btn primary wide', onclick: () => app.cmd('group') }, 'Group (Ctrl G)'),
+      h('button', { class: 'btn primary wide', onclick: () => app.cmd('merge') }, 'Merge into one object (Ctrl G)'),
       h('button', { class: 'btn', onclick: () => app.cmd('duplicate') }, 'Duplicate'),
       h('button', { class: 'btn', onclick: () => app.cmd('drop') }, 'Drop to plate'),
       h('button', { class: 'btn', onclick: () => s.edit('make solid', () => sel.forEach((o) => { o.hole = false; })) }, 'All solid'),
@@ -313,9 +315,10 @@ export function renderSelbar(app) {
   const b = (label, cmd, title, svg) => h('button', { onclick: () => app.cmd(cmd), title, html: (svg || '') + `<span>${label}</span>` });
   const one = sel.length === 1 ? sel[0] : null;
   bar.replaceChildren(...[
-    sel.length > 1 ? b('Group', 'group', 'Merge, cutting holes (Ctrl+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/></svg>') : null,
+    // always shown (like Bambu Studio), greyed out with the reason when they don't apply
+    h('button', { onclick: () => app.cmd('merge'), disabled: sel.length < 2, title: sel.length < 2 ? 'Merge: select two or more parts first (Shift+click)' : 'Merge the selected parts into one object; holes cut into solids (Ctrl+G)', html: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/></svg><span>Merge</span>' }),
+    h('button', { onclick: () => app.cmd('unmerge'), title: 'Unmerge: split a merged object back into its parts, or a mesh into its separate pieces (Ctrl+Shift+G)', html: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M14 4l6 6M20 4l-6 6" stroke-width="1.3"/></svg><span>Unmerge</span>' }),
     sel.length > 1 ? b('Boolean', 'boolean', 'Mesh boolean: union, subtract or intersect (B)', BOOL_ICON.intersect) : null,
-    one?.type === 'group' ? b('Ungroup', 'ungroup', 'Split the group back into its shapes (Ctrl+Shift+G)', '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>') : null,
     b(sel.every((o) => o.hole) ? 'Solid' : 'Hole', 'toggleHole', 'Switch between solid and hole (H)', '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke-dasharray="3 2.4"/></svg>'),
     h('span', { class: 'sep' }),
     b('Duplicate', 'duplicate', 'Duplicate (Ctrl+D)', '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg>'),

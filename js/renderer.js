@@ -179,6 +179,8 @@ export class Renderer {
       gl.uniform3fv(S.u.uColor, it.rgb); gl.uniform1f(S.u.uHole, it.hole ? 1 : 0); gl.uniform1f(S.u.uSel, it.selected ? 1 : 0);
       gl.uniform1f(S.u.uAlpha, alphaPass ? (it.alpha ?? 1) : 1); gl.uniform1f(S.u.uFlip, it.flip ? 1 : 0);
       gl.uniform3fv(S.u.uGrow, it.grow || NO_GROW);
+      if (it.front) gl.polygonOffset(-1, -3); // overlays (thin walls) sit on their part's surface
+      else gl.polygonOffset(1, 1);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.pos); gl.enableVertexAttribArray(S.a.aPos); gl.vertexAttribPointer(S.a.aPos, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.nor); gl.enableVertexAttribArray(S.a.aNor); gl.vertexAttribPointer(S.a.aNor, 3, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, b.count);

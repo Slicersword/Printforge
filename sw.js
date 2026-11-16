@@ -1,8 +1,8 @@
 // Offline support. Network first, so a new upload shows up on the next reload; the cache is used when offline.
-const CACHE = 'printforge-v17';
+const CACHE = 'printforge-v19';
 const SHELL = ['./', 'index.html', 'css/app.css', 'manifest.webmanifest', 'assets/icon.svg', 'vendor/manifold.js', 'vendor/manifold.wasm',
   'js/main.js', 'js/kernel.js', 'js/math.js', 'js/scene.js', 'js/shapes.js', 'js/renderer.js', 'js/viewport.js', 'js/ui.js', 'js/io.js',
-  'js/printers.js', 'js/generators.js', 'js/sketch.js', 'js/script.js', 'js/printprep.js', 'js/textshape.js', 'js/gcode.js', 'js/palette.js', 'js/makers.js', 'js/repair.js', 'js/tools.js', 'js/qr.js', 'js/studio.js', 'js/mold.js', 'js/models.js', 'js/texture.js', 'js/templates.js', 'js/printlink.js', 'js/storage.js', 'js/fillet.js', 'js/motion.js'];
+  'js/printers.js', 'js/generators.js', 'js/sketch.js', 'js/script.js', 'js/printprep.js', 'js/textshape.js', 'js/gcode.js', 'js/palette.js', 'js/makers.js', 'js/repair.js', 'js/tools.js', 'js/qr.js', 'js/studio.js', 'js/mold.js', 'js/models.js', 'js/texture.js', 'js/templates.js', 'js/printlink.js', 'js/storage.js', 'js/fillet.js', 'js/motion.js', 'js/share.js', 'js/geo.js', 'js/geoops.js', 'js/worker.js'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('printforge-') && k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); }); // deletes only PrintForge's own old caches
 self.addEventListener('fetch', (e) => {

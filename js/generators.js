@@ -485,9 +485,13 @@ function hexPlug(p, K) {
   // grip: a notch on top of the plate edge so it can be levered out with a fingernail or a flat screwdriver
   return M.union([plug, plate]).subtract(M.cube([t + 2, 6, 1.2]).translate([R + p.sleeve + t / 2, -3, p.h - 1.2]));
 }
+// Open-top hubs: the hub stops at the bar tops and is hollow down to the channel floor, so the LED strip runs in at the
+// same height as in the bars and the strip ends, jumper wires and solder joints sit inside, under the diffuser.
+const openHubs = (p) => (p.hubTop || 'closed') === 'open';
+const hubTopZ = (p) => (openHubs(p) ? p.h : p.h + hexDims(p).ct);
 function hexConnector(p, K, dirs) {
   const M = K.Manifold; const { W, g0, ct, jw, iW, oW, jh, R } = hexDims(p);
-  const top = p.h + ct, sl = p.sleeve;
+  const top = openHubs(p) ? p.h : p.h + ct, sl = p.sleeve; void ct;
   const inner = K.CrossSection.ofPolygons([[[-iW / 2 + 0.4, -0.01], [iW / 2 - 0.4, -0.01], [iW / 2, 0.4], [iW / 2, jh + 1], [-iW / 2, jh + 1], [-iW / 2, 0.4]]]);
   const prof = K.CrossSection.square([oW, jh + jw]).translate([-oW / 2, -jw]).subtract(inner);
   // the sleeve reaches 0.5 mm into the hub so every arm is fused to it (touching faces alone can leave an arm loose)
@@ -497,8 +501,16 @@ function hexConnector(p, K, dirs) {
   const tunnel = M.cube([R + 0.5, W, g0 - p.floor]).translate([0, -W / 2, p.floor]);
   let c = M.union([hub, ...dirs.map((a) => sleeve.rotate([0, 0, a]))]);
   c = c.subtract(M.union([M.cylinder(g0 - p.floor, W / 2, W / 2, 32).translate([0, 0, p.floor]), ...dirs.map((a) => tunnel.rotate([0, 0, a]))]));
-  // countersunk M3 screw through the middle of the hub, head flush with the top
-  c = c.subtract(M.cylinder(top + jw + 2, 1.7, 1.7, 24).translate([0, 0, -jw - 1])).subtract(M.cylinder(1.6, 1.7, 3.3, 24).translate([0, 0, top - 1.59]));
+  if (openHubs(p)) {
+    // hollow the hub: inner walls follow the sleeve insides, 1.4 mm walls all round, floor level with the channel floor
+    const inFace = M.cube([0.01, iW, top + 2]).translate([R + 0.6, -iW / 2, p.floor]);
+    c = c.subtract(M.hull(dirs.map((a) => inFace.rotate([0, 0, a]))));
+    // countersunk M3 screw, head flush with the hub floor (under the strip)
+    c = c.subtract(M.cylinder(top + jw + 2, 1.7, 1.7, 24).translate([0, 0, -jw - 1])).subtract(M.cylinder(1.6, 1.7, 3.3, 24).translate([0, 0, p.floor - 1.59]));
+  } else {
+    // countersunk M3 screw through the middle of the hub, head flush with the top
+    c = c.subtract(M.cylinder(top + jw + 2, 1.7, 1.7, 24).translate([0, 0, -jw - 1])).subtract(M.cylinder(1.6, 1.7, 3.3, 24).translate([0, 0, top - 1.59]));
+  }
   if (p.backHole) c = c.subtract(M.cylinder(jw + p.floor + 1, 3, 3, 24).translate([0, 0, -jw - 0.5]).translate([R * 0.55 * Math.cos(dirs[0] * Math.PI / 180), R * 0.55 * Math.sin(dirs[0] * Math.PI / 180), 0]));
   return c;
 }
@@ -640,11 +652,11 @@ function frameDiffuserPieces(p, K, gr, d) {
 }
 function frameDiffuser(p, K, gr, d) {
   const M = K.Manifold; const { foot, groups } = frameDiffuserPieces(p, K, gr, d);
-  const tape = Math.max(0, p.tape); const z0 = p.h + d.ct + tape; // cover underside: on the hub tops, plus the tape
+  const tape = Math.max(0, p.tape); const z0 = hubTopZ(p) + tape; // cover underside: on the hub tops, plus the tape
   let solid = frameCover(p, K, foot, z0);
   // ribs onto the bar tops (the bars are d.ct lower than the hubs), so the tape holds the bars as well
-  const ribs = gr.edges.map(([a, b]) => K.CrossSection.ofPolygons([stripAlong(a, b, d.R + 0.2, p.side - d.R - 0.2, d.Wo)]).extrude(d.ct + 0.01).translate([0, 0, p.h + tape]));
-  solid = M.union([solid, ...ribs]);
+  const rh = hubTopZ(p) - p.h; // hubs stand this much above the bars (0 when they're open)
+  if (rh > 0.05) { const ribs = gr.edges.map(([a, b]) => K.CrossSection.ofPolygons([stripAlong(a, b, d.R + 0.2, p.side - d.R - 0.2, d.Wo)]).extrude(rh + 0.01).translate([0, 0, p.h + tape])); solid = M.union([solid, ...ribs]); }
   const sep = p.layout === 'separate';
   // assembled view only: trim 0.3 mm off each side of every cut so the joints show (the pieces to print are full size)
   const prism = (cs) => (sep ? cs : cs.offset(-0.3, 'Miter', 4)).extrude(400).translate([0, 0, -200]);
@@ -658,6 +670,66 @@ function frameDiffuser(p, K, gr, d) {
   let x = 0; const out = [];
   for (const f of flat) { const b = f.boundingBox(); const wx = b.max[0] - b.min[0]; out.push(f.translate([x + wx / 2, 0, 0])); x += wx + 10; }
   return M.compose(out).translate([-(x - 10) / 2, 0, 0]);
+}
+// ---- Snap-fit diffuser with angled joints: one piece per bar, cut along the angle bisectors at each connector so the
+// cuts meet at the hub centre (a straight mitre through 2-bar corners, a three-way star through 3-bar joints). Pieces
+// snap into the bar grooves like the snap-in diffuser, and cover the open hubs too. Neighbouring pieces overlap in a
+// half-lap (the top half of one over the bottom half of the next), so no light leaks and the whole frame reads as one.
+const isMiter = (q) => q.diffType === 'miter';
+function edgeCell(gr, a, b, Lr) {
+  const ang = (v, w) => Math.atan2(w.y - v.y, w.x - v.x);
+  const sides = (v, e) => { // bisector angles either side of edge direction e at vertex v
+    const ds = v.dirs.map((d) => d * Math.PI / 180); let ccw = 2 * Math.PI, cw = 2 * Math.PI;
+    for (const d of ds) { let g = ((d - e) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI); if (g < 1e-3) continue; ccw = Math.min(ccw, g); cw = Math.min(cw, 2 * Math.PI - g); }
+    return { left: e + ccw / 2, right: e - cw / 2 };
+  };
+  const u = ang(a, b), sa = sides(a, u), sb = sides(b, u + Math.PI);
+  const P = (v, t) => [v.x + Math.cos(t) * Lr, v.y + Math.sin(t) * Lr];
+  const ring = [[a.x, a.y], P(a, sa.right), P(b, sb.left), [b.x, b.y], P(b, sb.right), P(a, sa.left)];
+  return ringArea(ring) < 0 ? ring.reverse() : ring;
+}
+function miterDiffuser(p, K, gr, d) {
+  const M = K.Manifold, CS = K.CrossSection; const ct = d.ct, h0 = p.h; const lap = Math.max(0, p.lapLen ?? 3);
+  const w = d.oW + 2 * (p.fdOver ?? 0.5); const foot = frameFootprint(p, K, gr, d, w);
+  const cells = gr.edges.map(([a, b]) => CS.ofPolygons([edgeCell(gr, a, b, 3 * w + 20)]));
+  // two layers, each a partition of the footprint; the order flips between layers, which makes the half-lap
+  const layer = (order) => { const out = new Array(cells.length); let taken = null;
+    for (const i of order) { let c = lap > 0 ? cells[i].offset(lap, 'Miter', 4) : cells[i]; if (taken) c = c.subtract(taken); out[i] = c.intersect(foot); taken = taken ? taken.add(c) : c; }
+    return out; };
+  const idx = cells.map((_, i) => i); const half = ct / 2;
+  const topL = layer(idx), botL = lap > 0 ? layer(idx.slice().reverse()) : topL;
+  const legs = along(ledDiffuserProfile(p, K).subtract(CS.square([400, 400]).translate([-200, h0])), d.bar - 0.3, K); // the snap legs only
+  const pieces = gr.edges.map(([a, b], i) => {
+    const parts = [botL[i].extrude(half + 0.001).translate([0, 0, h0]), topL[i].extrude(ct - half).translate([0, 0, h0 + half])];
+    parts.push(legs.rotate([0, 0, Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI]).translate([(a.x + b.x) / 2, (a.y + b.y) / 2, 0]));
+    let m = M.union(parts);
+    const r = Math.min(p.filR ?? 0.6, ct - 0.3); // soften the top edges of the long sides (never the joints)
+    if ((p.filOut || p.filIn) && r > 0.05) m = softenTop(K, m, foot, h0 + ct, r, p);
+    return m;
+  });
+  return pieces;
+}
+// round/chamfer the outside and/or hexagon-side top edges of a piece, without touching its joint faces
+function softenTop(K, m, foot, ztop, r, p) {
+  const CS = K.CrossSection; const rings = foot.toPolygons(); const outerCS = CS.ofPolygons(rings.filter((g) => ringArea(g) > 0));
+  const holesCS = outerCS.subtract(foot); const n = Math.max(4, Math.min(16, Math.ceil(r / 0.1))); const cut = [];
+  for (let i = 1; i <= n; i++) {
+    const t = r * i / n; const ins = p.filType === 'chamfer' ? t : r - Math.sqrt(Math.max(0, r * r - t * t));
+    const keep = insetSection(K, outerCS, holesCS, p.filOut ? ins : 0, p.filIn ? ins : 0);
+    cut.push(CS.square([1e5, 1e5], true).subtract(keep).extrude(r / n + 0.002).translate([0, 0, ztop - r + (i - 1) * r / n]));
+  }
+  return m.subtract(K.Manifold.union(cut));
+}
+function miterOutput(p, K, gr, d) {
+  const M = K.Manifold; const pieces = miterDiffuser(p, K, gr, d);
+  const pick = p.fdPiece > 0 ? Math.min(p.fdPiece, pieces.length) : 0;
+  if (p.layout !== 'separate') return pick ? pieces[pick - 1] : M.compose(pieces); // assembled: seamless, as it will look
+  // to print: cover face down (smooth face, legs up), turned along X, in rows
+  const flat = pieces.map((m, i) => { const [a, b] = gr.edges[i]; const f = m.rotate([0, 0, -Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI]).rotate([180, 0, 0]); const bb = f.boundingBox(); return f.translate([-(bb.min[0] + bb.max[0]) / 2, -(bb.min[1] + bb.max[1]) / 2, -bb.min[2]]); });
+  if (pick) return flat[pick - 1];
+  const out = []; const cols = Math.max(1, Math.floor(240 / (p.side + 10))); let row = 0, col = 0, rowH = 0, y = 0;
+  for (const f of flat) { const bb = f.boundingBox(); const wx = bb.max[0] - bb.min[0], wy = bb.max[1] - bb.min[1]; out.push(f.translate([col * (p.side + 10), -y, 0])); rowH = Math.max(rowH, wy); if (++col >= cols) { col = 0; row++; y += rowH + 6; rowH = 0; } void wx; }
+  void row; return M.compose(out);
 }
 function frameDiffuserInfo(p) {
   try {
@@ -673,7 +745,7 @@ function frameDiffuserInfoMemo(p) {
   return infoMemo.get(k);
 }
 const isFrame = (q) => (q.diffType || 'snap') === 'frame';
-const filOn = (q) => isFrame(q) && (q.filOut || q.filIn);
+const filOn = (q) => (isFrame(q) || isMiter(q)) && (q.filOut || q.filIn);
 gen('hexlight', {
   label: 'Hexagon wall lights', blurb: 'Honeycomb LED wall light: channel bars with snap-in diffusers, joined by 2-way and 3-way connectors.',
   icon: gicon('<path d="M10 4l6 3.5v7L10 18l-6-3.5v-7z"/><path d="M22 11l6 3.5v7L22 25l-6-3.5v-7z"/><path d="M10 18v7l6 3.5"/>'),
@@ -687,16 +759,18 @@ gen('hexlight', {
     n('wall', 'Wall', 2.2, 1.4, 4, 0.1), n('floor', 'Floor', 1.4, 0.8, 4, 0.1), n('dT', 'Diffuser cover thickness', 1.45, 0.6, 3, 0.05), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
     n('sleeve', 'Connector sleeve length', 15, 6, 40, 1), bool('backHole', 'Cable hole through the back of the connectors', false),
     sel('ends', 'Outside edge', 'modular', [['modular', 'Modular: 3-way connectors with plugs (add hexagons later)'], ['closed', 'Closed: 2-way corners (neater, fixed size)']]),
-    sel('diffType', 'Diffuser', 'frame', [['frame', 'Full frame, one cover (double-sided tape)'], ['snap', 'Snap-in, one per bar']]),
+    sel('hubTop', 'Connector hubs', 'open', [['open', 'Open top: strip ends and wires join inside, under the diffuser'], ['closed', 'Closed top']]),
+    sel('diffType', 'Diffuser', 'miter', [['miter', 'Snap-fit, angled joints (looks like one piece)'], ['frame', 'Full frame, one cover (double-sided tape)'], ['snap', 'Snap-in, one per bar']]),
+    { ...n('lapLen', 'Joint overlap (half-lap)', 3, 0, 8, 0.5), when: isMiter },
     { ...n('fdT', 'Full-frame cover thickness', 2, 0.8, 6, 0.1), when: isFrame },
-    { ...n('fdOver', 'Cover overhang past the connectors', 0.5, 0, 6, 0.1), when: isFrame },
+    { ...n('fdOver', 'Cover overhang past the connectors', 0.5, 0, 6, 0.1), when: (q) => isFrame(q) || isMiter(q) },
     { ...n('tape', 'Double-sided tape thickness', 1, 0, 3, 0.05), when: isFrame },
     { ...sel('fdSplit', 'Piece size', 'plate', [['none', 'No limit (one piece)'], ['plate', 'Fit my build plate'], ['custom', 'Custom maximum size'], ['joint', 'Modular: one piece per connector']]), when: isFrame },
     { ...n('fdMaxW', 'Largest piece: width', 200, 60, 3000, 1), when: (q) => isFrame(q) && q.fdSplit === 'custom' },
     { ...n('fdMaxD', 'Largest piece: depth', 200, 60, 3000, 1), when: (q) => isFrame(q) && q.fdSplit === 'custom' },
-    { ...int('fdPiece', 'Show piece (0 = all)', 0, 0, 60), when: (q) => isFrame(q) && q.fdSplit !== 'none' },
-    { ...bool('filOut', 'Round the outer edge', true), when: isFrame },
-    { ...bool('filIn', 'Round the edges around each hexagon', true), when: isFrame },
+    { ...int('fdPiece', 'Show piece (0 = all)', 0, 0, 200), when: (q) => (isFrame(q) && q.fdSplit !== 'none') || isMiter(q) },
+    { ...bool('filOut', 'Round the outer edge', true), when: (q) => isFrame(q) || isMiter(q) },
+    { ...bool('filIn', 'Round the edges around each hexagon', true), when: (q) => isFrame(q) || isMiter(q) },
     { ...sel('filType', 'Edge shape', 'round', [['round', 'Fillet (round)'], ['chamfer', 'Chamfer (45°)']]), when: filOn },
     { ...n('filR', 'Fillet / chamfer size', 0.8, 0.1, 5, 0.1), when: filOn },
     { ...n('bedW', 'Plate width', 256, 50, 2000), when: () => false }, { ...n('bedD', 'Plate depth', 256, 50, 2000), when: () => false },
@@ -707,6 +781,7 @@ gen('hexlight', {
     if (d.bar < 20) throw new Error(`Hexagons are too small for this channel. Make the side at least ${Math.ceil(2 * d.R + 21)} mm.`);
     const gr = hexGrid(p); const sep = p.layout === 'separate';
     if (p.part === 'diffuser' && isFrame(p)) { kernelRef = K; return frameDiffuser(p, K, gr, d); }
+    if (p.part === 'diffuser' && isMiter(p)) return miterOutput(p, K, gr, d);
     if (p.part === 'bar' || p.part === 'diffuser') {
       const piece = p.part === 'bar' ? along(ledProfile(p, K), d.bar, K) : along(ledDiffuserProfile(p, K), d.bar - 0.3, K);
       if (sep) return p.part === 'bar' ? piece : (() => { const f = piece.rotate([180, 0, 0]); const b = f.boundingBox(); return f.translate([0, d.oW + 10 - b.min[1], -b.min[2]]); })();

@@ -65,6 +65,10 @@ const I = {
   teardrop: '<path d="M12 3l6 7a7 7 0 1 1-12 0z"/>',
   vent: '<circle cx="7" cy="7" r="2"/><circle cx="12" cy="7" r="2"/><circle cx="17" cy="7" r="2"/><circle cx="7" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="17" cy="12" r="2"/><circle cx="7" cy="17" r="2"/><circle cx="12" cy="17" r="2"/><circle cx="17" cy="17" r="2"/>',
   text: '<path d="M5 5h14 M12 5v14 M9 19h6"/>',
+  bearing: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="5.9" r="1.2"/><circle cx="17.3" cy="15" r="1.2"/><circle cx="6.7" cy="15" r="1.2"/>',
+  magnet: '<path d="M6 4h4v9a2 2 0 0 0 4 0V4h4v9a6 6 0 0 1-12 0z"/><path d="M6 8h4M14 8h4"/>',
+  snaphook: '<path d="M7 21V5h4v10l4 0-4 4"/><path d="M5 21h10"/>',
+  snapslot: '<rect x="5" y="7" width="14" height="10" rx="1"/><path d="M9 12h6" stroke-dasharray="2 1.5"/>',
 };
 export const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round">${I[k] || I.box}</svg>`;
 export const ICONS = I;
@@ -204,6 +208,59 @@ defineShape('insert', {
     if (p.lead > 0) s = s.add(K.Manifold.cylinder(p.lead, r, r + p.lead, 40).translate([0, 0, p.depth - p.lead]));
     return s;
   },
+});
+// Bearing seat: a pocket the bearing presses (or slides) into, a lead-in chamfer so it starts straight, and a narrower
+// ledge under it that stops the outer race while leaving the inner race free to turn.
+const BEARINGS = { '608': [8, 22, 7], '625': [5, 16, 5], '688': [8, 16, 5], '623': [3, 10, 4], '6001': [12, 28, 8], '6200': [10, 30, 9] };
+defineShape('bearing', {
+  label: 'Bearing seat', category: 'Holes & hardware', icon: 'bearing', hole: true,
+  note: 'A pocket for a ball bearing (608 skate bearing by default) with print clearance and a stop ledge.',
+  params: [sel('size', 'Bearing', '608', Object.keys(BEARINGS)), sel('fitType', 'Fit', 'press', [['press', 'Press fit (+0.10 mm)'], ['snug', 'Snug (+0.15 mm)'], ['slide', 'Slide in (+0.25 mm)']]),
+    n('extra', 'Extra depth', 0.2, 0, 5, 0.1), n('ledge', 'Stop ledge depth', 3, 0, 50, 0.5), n('lip', 'Ledge width', 1.5, 0.5, 5, 0.1), n('lead', 'Lead-in chamfer', 0.4, 0, 2, 0.1)],
+  build: (p, K) => {
+    const [, D, B] = BEARINGS[p.size] || BEARINGS['608']; const fit = { press: 0.1, snug: 0.15, slide: 0.25 }[p.fitType] ?? 0.15;
+    const r = D / 2 + fit, z0 = p.ledge, depth = B + p.extra; const M = K.Manifold;
+    let s = M.cylinder(depth, r, r, 96).translate([0, 0, z0]);
+    if (p.lead > 0) s = s.add(M.cylinder(p.lead, r, r + p.lead, 96).translate([0, 0, z0 + depth - p.lead]));
+    if (p.ledge > 0) { const ri = Math.max(D / 2 - p.lip, 1); s = s.add(M.cylinder(p.ledge + 0.01, ri, ri, 72)); }
+    return s;
+  },
+});
+// Magnet pocket: round or block magnets, with clearance and an optional pry slot to get the magnet back out.
+defineShape('magnet', {
+  label: 'Magnet pocket', category: 'Holes & hardware', icon: 'magnet', hole: true,
+  note: 'A pocket for a round or block magnet with print clearance. Tip: to seal a magnet inside, pause the print at the layer above the pocket.',
+  params: [sel('shape', 'Magnet', 'round', [['round', 'Round (disc)'], ['block', 'Block']]), n('dia', 'Diameter or length', 6, 1, 100, 0.5), n('wid', 'Width (block)', 6, 1, 100, 0.5),
+    n('thick', 'Magnet thickness', 3, 0.5, 50, 0.5), n('fit', 'Clearance (each side)', 0.15, 0, 1, 0.05), n('extra', 'Extra depth', 0.2, 0, 5, 0.1), bool('pry', 'Pry slot to remove it', false)],
+  build: (p, K) => {
+    const M = K.Manifold; const d = p.thick + p.extra; let s;
+    if (p.shape === 'block') s = M.cube([p.dia + 2 * p.fit, p.wid + 2 * p.fit, d], true).translate([0, 0, d / 2]);
+    else s = M.cylinder(d, p.dia / 2 + p.fit, p.dia / 2 + p.fit, 72);
+    if (p.pry) s = s.add(M.cube([p.dia / 2 + 3, 1.6, d], true).translate([(p.dia / 2 + 3) / 2, 0, d / 2]));
+    return s;
+  },
+});
+// Snap-fit clip: a cantilever hook. The lead-in ramp lets it slide in; the square catch keeps it there. The note shows
+// how hard the beam is strained when it bends; above about 2.5 % PLA is likely to crack.
+defineShape('snaphook', {
+  label: 'Snap-fit clip', category: 'Holes & hardware', icon: 'snaphook',
+  note: 'A cantilever snap hook. Print it standing up so the layers run along the beam. Pair it with a Clip window cut into the other part.',
+  params: [n('len', 'Beam length', 12, 3, 100, 0.5), n('t', 'Beam thickness', 1.6, 0.6, 10, 0.1), n('w', 'Width', 6, 1, 100, 0.5), n('catch', 'Catch depth', 1, 0.2, 5, 0.1), n('base', 'Base thickness', 2, 0, 20, 0.5)],
+  build: (p, K) => {
+    const L = p.len, t = p.t, y = p.catch, hh = y * 1.75 + 0.4; // 30° lead-in ramp
+    const prof = poly(K, [[0, 0], [t, 0], [t, L - hh], [t + y, L - hh], [t + 0.25, L], [0, L]]);
+    let s = prof.extrude(p.w).rotate([90, 0, 0]).translate([0, p.w / 2, p.base]);
+    if (p.base > 0) s = s.add(K.Manifold.cube([t + 4, p.w + 2, p.base]).translate([-2, -p.w / 2 - 1, 0]));
+    const strain = (1.5 * t * y) / ((L - hh / 2) ** 2) * 100;
+    if (strain > 4) throw new Error(`This clip bends too far (${strain.toFixed(1)} % strain); it will crack. Make the beam longer or thinner, or the catch shallower.`);
+    return s;
+  },
+});
+defineShape('snapslot', {
+  label: 'Clip window', category: 'Holes & hardware', icon: 'snapslot', hole: true,
+  note: 'The window a Snap-fit clip catches in, with clearance. Match the clip’s width, thickness and catch depth.',
+  params: [n('w', 'Clip width', 6, 1, 100, 0.5), n('t', 'Clip thickness', 1.6, 0.6, 10, 0.1), n('catch', 'Catch depth', 1, 0.2, 5, 0.1), n('fit', 'Clearance (each side)', 0.25, 0, 1, 0.05), n('depth', 'Wall to cut through', 3, 0.5, 50, 0.5)],
+  build: (p, K) => K.Manifold.cube([p.t + p.catch + 2 * p.fit, p.w + 2 * p.fit, p.depth + 0.2], true).translate([0, 0, (p.depth + 0.2) / 2 - 0.1]),
 });
 defineShape('teardrop', {
   label: 'Teardrop hole', category: 'Holes & hardware', icon: 'teardrop', hole: true,
