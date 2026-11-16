@@ -1,14 +1,15 @@
+export const VERSION = '11';
+import { saveCurrent, loadCurrent, snapshot, listVersions, loadVersion } from './storage.js';
 import { initKernel, K, worldManifold, localGeometry, free, kindDef, setRepairHandler } from './kernel.js';
 import { Scene, makeShape, uid, nextColor, cloneObj } from './scene.js';
 import { SHAPES, defaults } from './shapes.js';
 import { Viewport } from './viewport.js';
-import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row } from './ui.js';
+import { Library, shapesTab, renderOutline, renderInspector, renderSelbar, h, axisMap, numField, row, IS_MAC, keyName } from './ui.js';
 import { PRINTERS, printerById } from './printers.js';
 import { toSTL, toOBJ, to3MF, zip, importFile, download } from './io.js';
 import { eulerMatrix, transformDir, fmt, eulerFromMatrix, mul, transformPoint } from './math.js';
 import { hex, PLATES } from './renderer.js';
 
-const STORE_KEY = 'printforge.autosave.v1';
 const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } } };
 
 class App {
@@ -18,7 +19,10 @@ class App {
   emit(e, ...a) { (this.listeners[e] || []).forEach((f) => f(...a)); }
 
   async start() {
-    await initKernel();
+    const bar = document.getElementById('loadBar'), msg = document.getElementById('loadMsg');
+    const step = (t, f) => { if (msg) msg.textContent = t; if (bar && f != null) bar.style.width = `${Math.round(f * 100)}%`; };
+    await initKernel((f) => step(`Loading the geometry engine… ${Math.round(f * 85)}%`, f * 0.85));
+    step('Starting the tools…', 0.9);
     this.scene = new Scene();
     setRepairHandler((o) => setTimeout(() => this.toast(`“${o.name}” had holes or loose faces, so it was rebuilt as a solid. Check small details.`, 5000), 50));
     this.view = new Viewport(this, document.getElementById('view'));
@@ -33,11 +37,16 @@ class App {
     this.scene.on('select', () => { if (this._cut && !this.scene.selection.has(this._cut.id)) { this._cut = null; this.view.extraLines = null; } });
     this._initAppearance();
     this.applyPrinter();
-    const saved = store.get(STORE_KEY);
-    if (saved) { try { this.scene.load(JSON.parse(saved)); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { /* ignore broken autosave */ } }
+    // restore the last workspace (IndexedDB, or the older localStorage copy)
+    const saved = await loadCurrent();
+    if (saved) { try { this.scene.load(saved); if (this.scene.objects.length) this.toast('Restored your last design'); } catch { this.toast('Your last design couldn’t be restored. Earlier versions are in Help → Recover.', 5000); } }
+    this._saveState('saved');
     this._changed(); this._selChanged();
     this.view.fit();
     document.getElementById('loading').classList.add('done');
+    if (window.__pfInstall) this.installPrompt = window.__pfInstall;
+    // on a Mac, show ⌘ instead of Ctrl in the visible shortcut hints
+    if (IS_MAC) document.querySelectorAll('kbd').forEach((k) => { k.textContent = keyName(k.textContent); });
     this.ready = true; this.emit('ready');
   }
 
@@ -48,7 +57,32 @@ class App {
     this.updateHints();
     renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus();
     this.view.redraw(); this.emit('change');
-    clearTimeout(this._save); this._save = setTimeout(() => store.set(STORE_KEY, JSON.stringify(s.toJSON())), 600);
+    if (this.ready) { this._saveState('saving'); clearTimeout(this._save); this._save = setTimeout(() => this._autosave(), 600); }
+  }
+  /** Autosave the design; keep a recovery version every few minutes. Failures stay visible until a save works. */
+  async _autosave() {
+    const doc = this.scene.toJSON();
+    try {
+      const where = await saveCurrent(doc); this._saveState(where === 'idb' ? 'saved' : 'saved-small');
+      if (where === 'idb' && Date.now() - (this._lastSnap || 0) > 4 * 60e3 && doc.objects.length) { this._lastSnap = Date.now(); snapshot(doc).catch(() => {}); }
+    } catch (e) { this._saveState('failed', e.message); }
+  }
+  _saveState(state, msg = '') {
+    this.saveState = state; const el = document.getElementById('saveState'); if (!el) return;
+    const t = { saving: 'Saving…', saved: 'Saved in this browser', 'saved-small': 'Saved (small storage)', failed: 'Save failed' }[state];
+    el.className = `save-state ${state}`; el.replaceChildren(document.createTextNode(t));
+    el.title = state === 'failed' ? `${msg} Download a backup so you don’t lose work.` : state === 'saving' ? 'Saving your changes in this browser' : 'Your design is kept in this browser. Use Save to keep a file.';
+    if (state === 'failed') { el.append(h('button', { class: 'btn', onclick: () => this.cmd('save') }, 'Download backup')); if (!this._failToast) { this._failToast = true; this.toast(`Your changes couldn’t be saved in this browser. ${msg} Download a backup.`, 7000); } }
+    else this._failToast = false;
+  }
+  async openRecovery() {
+    let list = [];
+    try { list = await listVersions(); } catch (e) { this.toast(`Recovery versions aren’t available: ${e.message}`); return; }
+    const when = (t) => new Date(t).toLocaleString();
+    const d = this.modal('Recover an earlier version', h('p', { class: 'note' }, 'PrintForge keeps a few versions of your design in this browser, a few minutes apart. Opening one keeps your current design as a version too.'),
+      list.length ? h('ul', { class: 'recover-list' }, ...list.map((v) => h('li', {}, h('span', {}, h('b', {}, v.name || 'Untitled design'), h('small', {}, `${when(v.time)} · ${v.objects} object${v.objects === 1 ? '' : 's'}`)),
+        h('button', { class: 'btn', onclick: async () => { try { const doc = await loadVersion(v.id); if (!doc) throw new Error('This version is empty.'); await snapshot(this.scene.toJSON(), 'before recovery').catch(() => {}); this.scene.load(doc); d.close(); this.view.fit(); this.toast(`Opened the version from ${when(v.time)}`); } catch (e) { this.toast(e.message, 5000); } } }, 'Open')))) : h('p', {}, 'No earlier versions yet. They appear after a few minutes of work.'),
+      h('div', { class: 'modal-foot' }, h('button', { class: 'btn', onclick: () => d.close() }, 'Close')));
   }
   _selChanged() { renderOutline(this); renderInspector(this); renderSelbar(this); this.renderStatus(); this._updateToolbar(); this.view.redraw(); }
   _updateToolbar() { const tb = document.getElementById('toolbar'); if (tb) tb.hidden = this.mode !== 'design' || !this.scene.selection.size; }
@@ -217,14 +251,14 @@ class App {
       case 'bool:union': if (need()) this.boolean('union'); break;
       case 'bool:subtract': if (need()) this.boolean('subtract'); break;
       case 'bool:intersect': if (need()) this.boolean('intersect'); break;
-      case 'new': if (!s.objects.length || confirmLoss('Start a new design?')) { s.reset(); this.applyPrinter(); this.view.fit(false); } break;
+      case 'new': if (!s.objects.length || confirmLoss('Start a new design?')) { if (s.objects.length) snapshot(s.toJSON(), 'before new').catch(() => {}); s.reset(); this.applyPrinter(); this.view.fit(false); } break;
+      case 'recover': this.openRecovery(); break;
       case 'open': document.getElementById('fileOpen').click(); break;
       case 'save': this.saveProject(); break;
       case 'import': document.getElementById('fileImport').click(); break;
       case 'exportMenu': case 'appearanceMenu': { const m = document.getElementById(name); const open = m.hidden; this.closeMenus(); m.hidden = !open; break; }
       case 'palette': this.openPalette?.(); break;
       case 'gcode': this.openGcode?.(); break;
-      case 'ai': this.openAI?.(); break;
       case 'help': this.showHelp(); break;
       case 'frame': this.view.fit(); break;
       default:
@@ -341,7 +375,7 @@ class App {
     download(new Blob([data], { type: 'application/json' }), `${base}.pforge`); s.dirty = false; this.toast('Saved project file');
   }
   async openProject(file) {
-    try { const data = JSON.parse(await file.text()); this.scene.load(data); this.applyPrinter(); this.view.fit(false); this.toast(`Opened ${file.name}`); }
+    try { const data = JSON.parse(await file.text()); const prev = this.scene.objects.length ? this.scene.toJSON() : null; this.scene.load(data); if (prev) snapshot(prev, 'before open').catch(() => {}); this.applyPrinter(); this.view.fit(false); this.toast(`Opened ${file.name}`); }
     catch (e) { this.toast(e.message || 'This file could not be opened.', 4000); }
   }
   async importFiles(files) {
@@ -423,14 +457,18 @@ class App {
       ['Move tool', 'M'], ['Rotate tool', 'R'], ['Scale tool', 'S'], ['Lay on face', 'F'], ['Cut in two', 'C'], ['Mesh boolean', 'B'], ['Measure', 'U'], ['Fit view', 'Z'],
       ['Undo / redo', 'Ctrl+Z / Ctrl+Shift+Z'], ['Duplicate', 'Ctrl+D'], ['Group / ungroup', 'Ctrl+G / Ctrl+Shift+G'], ['Hole ↔ solid', 'H'], ['Turn 90° on the plate', 'Shift+R'], ['Drop to plate', 'D'],
       ['Nudge', 'Arrows (Shift ×10)'], ['Raise / lower', 'Page Up / Page Down'], ['Delete', 'Delete / Backspace'], ['Select all', 'Ctrl+A'], ['Views', '7 top · 1 front · 3 right · 0 iso · 5 persp'],
-      ['Search every tool', 'Ctrl+K'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E']];
-    this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, b)))),
+      ['Search every tool', 'Ctrl+K'], ['Save / open', 'Ctrl+S / Ctrl+O'], ['Export STL', 'Ctrl+E'],
+      ['Section view', 'X'], ['Focus on the model', '\\'], ['Hide library / properties', '[ / ]'], ['Actions menu', 'Right-click · Shift+F10']];
+    const d = this.modal('Shortcuts', h('div', { class: 'help-grid' }, ...keys.map(([a, b]) => h('div', {}, h('span', {}, a), h('kbd', {}, keyName(b))))),
       h('p', { class: 'note', style: { marginTop: '14px' } }, h('b', {}, 'Move (M): '), 'drag a coloured arrow to move along that axis, or drag the part to slide it on the plate. Snaps to the grid; Shift snaps to 10 mm; Ctrl moves freely.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Rotate (R): '), 'drag a coloured ring to turn around X, Y or Z. Turns in whole degrees; Shift snaps to 15°.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Scale (S): '), 'drag a coloured cube to stretch that direction, or the white corner cube to scale evenly. Ctrl stretches one side only; Shift snaps to whole millimetres. Exact numbers go in the panel on the right.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Lay on face (F): '), 'click any flat face to put it down on the plate.'),
       h('p', { class: 'note', style: { marginTop: '8px' } }, h('b', {}, 'Mesh boolean (B): '), 'select parts, pick Union, Subtract or Intersect, choose which parts to keep and which cut away, check the preview, then Apply. Grouping holes instead keeps the shapes editable.'),
-      h('p', { class: 'note', style: { marginTop: '8px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'));
+      h('p', { class: 'note', style: { marginTop: '8px' } }, 'Number fields accept sums like 40/2+3 and inches like 2*inch. Arrow keys step values; Shift steps by ten.'),
+      h('div', { class: 'help-foot' }, h('span', { class: 'note' }, `PrintForge ${VERSION} · works offline once loaded`),
+        h('button', { class: 'btn', onclick: () => { d.close(); this.openRecovery(); } }, 'Recover an earlier version…'),
+        this.installPrompt ? h('button', { class: 'btn primary', onclick: async () => { const p = this.installPrompt; this.installPrompt = null; p.prompt(); d.close(); } }, 'Install as an app') : null));
   }
   modal(title, ...body) {
     const d = document.getElementById('modal'); let foot = null;
@@ -465,13 +503,23 @@ class App {
       const rest = files.filter((f) => !gc.includes(f)); if (rest.length) this.importFiles(rest);
     });
     const stage = document.getElementById('stage');
-    stage.addEventListener('dragover', (e) => { e.preventDefault(); });
-    stage.addEventListener('drop', (e) => {
-      e.preventDefault(); const files = [...e.dataTransfer.files];
+    // Drop files anywhere in the window: a full-window drop zone shows what will happen.
+    const zone = h('div', { class: 'drop-zone', hidden: true, 'aria-hidden': 'true' }, h('div', {}, h('b', {}, 'Drop to open'), h('span', {}, 'STL, OBJ, 3MF, GLB, a PrintForge project or sliced G-code')));
+    document.body.appendChild(zone); let depth = 0;
+    const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    window.addEventListener('dragenter', (e) => { if (!isFiles(e)) return; e.preventDefault(); depth++; zone.hidden = false; });
+    window.addEventListener('dragleave', (e) => { if (!isFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) zone.hidden = true; });
+    window.addEventListener('dragover', (e) => { if (isFiles(e)) e.preventDefault(); });
+    window.addEventListener('drop', (e) => {
+      if (!isFiles(e)) return; depth = 0; zone.hidden = true;
+      if (e.target.closest?.('dialog[open], input[type=file]')) return; // a dialog's own file field handles it
+      e.preventDefault(); const files = [...e.dataTransfer.files]; if (!files.length) return;
+      if (document.getElementById('modal').open) return;
       const gc = files.find((f) => /\.(gcode|gco|g)$|\.gcode\.3mf$/i.test(f.name)); if (gc) { this.loadGcode?.(gc); return; }
       const proj = files.find((f) => /\.(pforge|json)$/i.test(f.name)); if (proj) this.openProject(proj); else this.importFiles(files);
     });
-    window.addEventListener('beforeunload', (e) => { if (this.scene.dirty && this.scene.objects.length && !store.get(STORE_KEY)) { e.preventDefault(); } });
+    // warn before leaving only when the latest changes are not safely stored
+    window.addEventListener('beforeunload', (e) => { if (this.scene.objects.length && (this.saveState === 'failed' || this.saveState === 'saving')) { e.preventDefault(); e.returnValue = ''; } });
     document.addEventListener('keydown', (e) => this._key(e));
   }
   _key(e) {
@@ -502,6 +550,10 @@ class App {
     if (k === 'c') return go(() => this.openCut());
     if (k === 'u') return go(() => this.view.setMeasure(!this.view.measure));
     if (k === 'z') return go(() => this.view.fit());
+    if (k === 'x') return go(() => this.toggleSection?.());
+    if (e.key === '\\') return go(() => this.toggleFocus?.());
+    if (e.key === '[') return go(() => this.togglePanel?.('left'));
+    if (e.key === ']') return go(() => this.togglePanel?.('right'));
     if (k === 'h') return go(() => this.cmd('toggleHole'));
     if (k === 'g') return go(() => { const order = ['move', 'rotate', 'scale']; this.view.setTool(order[(order.indexOf(this.view.tool) + 1) % 3]); this.toast(`${this.view.tool[0].toUpperCase()}${this.view.tool.slice(1)} tool`); });
     if (k === 'd') return go(() => this.cmd('drop'));
@@ -520,14 +572,17 @@ class App {
 
 const ACCENTS = [['teal', 'Teal'], ['blue', 'Blue'], ['violet', 'Violet'], ['magenta', 'Magenta'], ['orange', 'Orange'], ['green', 'Green']];
 function xyzOnly(m) { const np = m.numProp, vp = m.vertProperties; if (np === 3) return new Float32Array(vp); const n = vp.length / np, out = new Float32Array(n * 3); for (let i = 0; i < n; i++) { out[i * 3] = vp[i * np]; out[i * 3 + 1] = vp[i * np + 1]; out[i * 3 + 2] = vp[i * np + 2]; } return out; }
-function confirmLoss(msg) { return window.confirm(`${msg} Unsaved changes stay in your browser's autosave only until you add something new.`); }
+function confirmLoss(msg) { return window.confirm(`${msg} The current design is kept as a recovery version (Help → Recover).`); }
 export { xyzOnly, eulerFromMatrix };
 void transformDir; void K;
 
 export const app = new App();
 window.printforge = app;
 // Feature modules register themselves before start().
-const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js'), import('./tools.js'), import('./studio.js'), import('./mold.js'), import('./models.js'), import('./texture.js'), import('./templates.js')]);
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); if (window.printforge) window.printforge.installPrompt = e; else window.__pfInstall = e; });
+// The AI feature was removed: clear any API keys an earlier version saved in this browser.
+try { for (const k of Object.keys(localStorage)) if (k.startsWith('printforge.ai')) localStorage.removeItem(k); } catch { /* storage unavailable */ }
+const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./tools.js'), import('./studio.js'), import('./mold.js'), import('./models.js'), import('./texture.js'), import('./templates.js'), import('./printlink.js')]);
 for (const m of mods) if (m.status === 'fulfilled' && m.value.install) app.plugins.push(m.value.install);
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !navigator.webdriver) navigator.serviceWorker.register('sw.js').catch(() => {});
 app.start().catch((e) => { document.getElementById('loading').innerHTML = `<p style="max-width:420px;text-align:center">PrintForge could not start: ${e.message}. Use a current Chrome, Edge, Firefox or Safari, and open the page through a web server (GitHub Pages works).</p>`; console.error(e); });

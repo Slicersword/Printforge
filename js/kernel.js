@@ -11,8 +11,19 @@ export function setRepairHandler(f) { onRepair = f; }
 export let K = null; // { Manifold, CrossSection, Mesh }
 const builders = new Map(); // kind -> { build(params, ctx) => Manifold, label }
 
-export async function initKernel() {
-  const wasm = await Module({ locateFile: (f) => new URL(`../vendor/${f}`, import.meta.url).href });
+export async function initKernel(onProgress) {
+  // Download the engine ourselves so the loading screen can show progress, then hand the bytes over.
+  const url = new URL('../vendor/manifold.wasm', import.meta.url).href; let wasmBinary;
+  try {
+    const res = await fetch(url); const total = +res.headers.get('content-length') || 0;
+    if (res.ok && res.body && total) {
+      const reader = res.body.getReader(); const parts = []; let got = 0;
+      for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; onProgress?.(got / total); }
+      wasmBinary = new Uint8Array(got); let o = 0; for (const p of parts) { wasmBinary.set(p, o); o += p.length; }
+    } else if (res.ok) wasmBinary = new Uint8Array(await res.arrayBuffer());
+  } catch { /* let the engine fetch it itself */ }
+  onProgress?.(1);
+  const wasm = await Module({ locateFile: (f) => new URL(`../vendor/${f}`, import.meta.url).href, ...(wasmBinary ? { wasmBinary } : {}) });
   wasm.setup();
   K = { Manifold: wasm.Manifold, CrossSection: wasm.CrossSection, Mesh: wasm.Mesh, wasm };
   return K;
@@ -79,7 +90,7 @@ export function localGeometry(obj) {
     const data = meshStore.get(obj.meshId);
     try { man = manifoldFromMesh(data); }
     catch (e) {
-      // Leaky mesh (common from AI generators and scans): rebuild it as a watertight solid once, and keep the result.
+      // Leaky mesh (common from scans and downloaded models): rebuild it as a watertight solid once, and keep the result.
       man = rebuildSolid(K, data);
       const m = man.getMesh(); const np = m.numProp; const vv = new Float32Array(m.vertProperties.length / np * 3);
       for (let i = 0, j = 0; i < m.vertProperties.length; i += np, j += 3) { vv[j] = m.vertProperties[i]; vv[j + 1] = m.vertProperties[i + 1]; vv[j + 2] = m.vertProperties[i + 2]; }

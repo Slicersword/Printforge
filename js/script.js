@@ -239,7 +239,7 @@ export function install(app) {
   for (const k of Object.keys(EXAMPLES)) app.addAction({ label: k, group: 'Code example', run: () => { app.setMode('design'); addExample(k); } });
   app.library.addTab('code', 'Code', (el) => {
     el.append(h('button', { class: 'btn primary', style: { width: '100%' }, onclick: () => openCode(app, null) }, 'New code model'));
-    el.append(h('p', { class: 'note', style: { margin: '8px 0' } }, 'Write a model in JavaScript. Every value in params() becomes a control in the panel, so you can tune the part without touching code again. Good for asking an AI assistant to write parts for you, too.'));
+    el.append(h('p', { class: 'note', style: { margin: '8px 0' } }, 'Write a model in JavaScript. Every value in params() becomes a control in the panel, so you can tune the part without touching code again.'));
     el.append(h('div', { class: 'group-label' }, 'Examples'));
     el.append(h('div', { class: 'gen-list' }, ...Object.keys(EXAMPLES).map((k) => h('button', { class: 'gen-btn', style: { gridTemplateColumns: '1fr' }, onclick: () => addExample(k) }, h('b', {}, k), h('span', {}, BLURBS[k] || 'Parametric code model')))));
   });

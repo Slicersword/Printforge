@@ -48,26 +48,32 @@ export class Viewport {
     if (!sel.length || this.mode !== 'design' || this.tool === 'flatten' || this.measure) return null;
     const box = this.scene.selectionBox(sel); if (!box) return null;
     const c = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2];
-    const span = Math.max(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
-    const screen = this.r.cam.dist / 300;            // keep roughly constant size on screen
-    const len = Math.max(span * 0.62 + 10, 18 * screen); // reach past the part
-    return { c, len, s: screen, box, ring: Math.max(span * 0.62 + 6, 16 * screen) };
+    // Size handles in screen pixels: work out how many mm one CSS pixel covers at the gizmo centre.
+    const cam = this.r.cam; const hpx = this.canvas.clientHeight || 600;
+    const e = cam.eye(); const dist = cam.persp ? Math.hypot(e[0] - c[0], e[1] - c[1], e[2] - c[2]) : cam.dist;
+    const wpp = 2 * dist * Math.tan(cam.fov * deg / 2) / hpx;
+    const s = 22 * wpp / 9;                 // arrow model is 9 mm long → about 22 px on screen
+    const half = [0, 1, 2].map((k) => (box.max[k] - box.min[k]) / 2);
+    const pad = 30 * wpp;                   // each handle sits ~30 px past the part along its own axis
+    const lens = half.map((v) => v + pad);
+    const rings = [0, 1, 2].map((k) => { const [a, b] = k === 0 ? [1, 2] : k === 1 ? [0, 2] : [0, 1]; return Math.hypot(half[a], half[b]) + 18 * wpp; });
+    return { c, len: Math.max(...lens), lens, s, wpp, half, box, ring: Math.max(...rings), rings };
   }
   /** In-plane basis (u, v) for a ring around world axis i, with u × v = axis (so +angle is a right-hand turn). */
   _ringBasis(i) { return i === 0 ? [[0, 1, 0], [0, 0, 1]] : i === 1 ? [[0, 0, 1], [1, 0, 0]] : [[1, 0, 0], [0, 1, 0]]; }
-  _ringPoints(g, i, n = 72) {
-    const [u, v] = this._ringBasis(i); const pts = [];
-    for (let k = 0; k <= n; k++) { const t = (k / n) * Math.PI * 2, cs = Math.cos(t) * g.ring, sn = Math.sin(t) * g.ring; pts.push([g.c[0] + u[0] * cs + v[0] * sn, g.c[1] + u[1] * cs + v[1] * sn, g.c[2] + u[2] * cs + v[2] * sn]); }
+  _ringPoints(g, i, n = 72, scale = 1) {
+    const [u, v] = this._ringBasis(i); const pts = []; const R = (g.rings ? g.rings[i] : g.ring) * scale;
+    for (let k = 0; k <= n; k++) { const t = (k / n) * Math.PI * 2, cs = Math.cos(t) * R, sn = Math.sin(t) * R; pts.push([g.c[0] + u[0] * cs + v[0] * sn, g.c[1] + u[1] * cs + v[1] * sn, g.c[2] + u[2] * cs + v[2] * sn]); }
     return pts;
   }
   /** Corner handle for scaling every side at once. */
-  _uniformPos(g) { const k = g.len * 0.62; return [g.c[0] + k, g.c[1] - k, g.c[2] + k]; }
+  _uniformPos(g) { const k = 24 * g.wpp; return [g.c[0] + g.half[0] + k, g.c[1] - g.half[1] - k, g.c[2] + g.half[2] + k]; }
   /** Screen positions of each axis tip, for hit-testing and drawing. */
   _gizmoTips(g) {
     const tips = [];
     for (let i = 0; i < 3; i++) {
       const dir = [0, 0, 0]; dir[i] = 1;
-      const pos = [g.c[0] + dir[0] * g.len, g.c[1] + dir[1] * g.len, g.c[2] + dir[2] * g.len];
+      const L = g.lens ? g.lens[i] : g.len; const pos = [g.c[0] + dir[0] * L, g.c[1] + dir[1] * L, g.c[2] + dir[2] * L];
       tips.push({ i, dir, pos, q: this.r.project(pos) });
     }
     return tips;
@@ -149,12 +155,12 @@ export class Viewport {
         const hot = hotAxis === i; const pts = this._ringPoints(g, i); const d = [];
         for (let k = 0; k + 1 < pts.length; k++) d.push(...pts[k], ...pts[k + 1]);
         extras.lines.push({ data: new Float32Array(d), color: [...this._axisRGB(i, hot), hot ? 1 : 0.8], noDepth: true });
-        if (hot) { const inner = this._ringPoints({ ...g, ring: g.ring * 0.985 }, i); const d2 = []; for (let k = 0; k + 1 < inner.length; k++) d2.push(...inner[k], ...inner[k + 1]); extras.lines.push({ data: new Float32Array(d2), color: [...this._axisRGB(i, true), 1], noDepth: true }); }
+        if (hot) { const inner = this._ringPoints(g, i, 72, 0.985); const d2 = []; for (let k = 0; k + 1 < inner.length; k++) d2.push(...inner[k], ...inner[k + 1]); extras.lines.push({ data: new Float32Array(d2), color: [...this._axisRGB(i, true), 1], noDepth: true }); }
       }
       // while turning, show the start and current spokes
       const st = this.state;
       if (st?.mode === 'gizmo' && st.kind === 'ring' && st.began) {
-        const [u, v] = this._ringBasis(st.axis); const R = g.ring;
+        const [u, v] = this._ringBasis(st.axis); const R = g.rings ? g.rings[st.axis] : g.ring;
         const at = (a) => [st.c[0] + (u[0] * Math.cos(a) + v[0] * Math.sin(a)) * R, st.c[1] + (u[1] * Math.cos(a) + v[1] * Math.sin(a)) * R, st.c[2] + (u[2] * Math.cos(a) + v[2] * Math.sin(a)) * R];
         const a0 = st.theta0, a1 = st.theta0 + st.accum * deg; const d = [...st.c, ...at(a0), ...st.c, ...at(a1)];
         const n = Math.max(2, Math.ceil(Math.abs(a1 - a0) / 0.08)); for (let k = 0; k < n; k++) d.push(...at(a0 + (a1 - a0) * k / n), ...at(a0 + (a1 - a0) * (k + 1) / n));
@@ -266,7 +272,7 @@ export class Viewport {
     this.state = { x0: x, y0: y, lx: x, ly: y, moved: false };
     if (this.measure && btn === 0) { this.state.mode = 'orbit'; this.state.measureClick = true; return; }
     if (btn === 1 || (btn === 2 && e.shiftKey)) { this.state.mode = 'pan'; return; }
-    if (btn === 2) { this.state.mode = 'orbit'; return; }
+    if (btn === 2) { this.state.mode = 'orbit'; this.state.right = true; return; }
     if (this.mode === 'design' && this.facePick && btn === 0) {
       const f = this._faceAt(x, y); if (f) { this.state.mode = 'face'; this.state.face = f; this.state.pick = true; return; }
     }
@@ -334,6 +340,12 @@ export class Viewport {
       const p = this._measurePoint(st.x0, st.y0); const ms = this.measure;
       if (p) { if (!ms.a || ms.b) { ms.a = p; ms.b = null; } else ms.b = p; }
       this.state = null; this.redraw(); return;
+    }
+    if (st.right && !st.moved && this.mode === 'design') {
+      // right-click without dragging: context menu for the part under the pointer (or the empty plate)
+      const hit = this.pick(st.x0, st.y0); this.state = null;
+      if (hit && !this.scene.selection.has(hit.obj.id)) this.scene.select(hit.obj.id);
+      this.app.showContextMenu?.(e.clientX, e.clientY, hit?.obj || null); return;
     }
     if (st.mode === 'face') { this.state = null; if (st.pick) this.facePick?.(st.face); else this.app.layOnFace?.(st.face.obj, st.face.normal); this._face = null; this.redraw(); return; }
     if (st.mode === 'gizmo') { this.dragging = false; this._dragAxis = null; this.labels.forEach((l) => l.remove()); this.labels = []; if (st.began) this.scene.commit(); this.state = null; this.redraw(); return; }

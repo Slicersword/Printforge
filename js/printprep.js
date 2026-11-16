@@ -135,6 +135,7 @@ export function install(app) {
     });
     app.toast(changed ? `Re-oriented ${changed} part${changed > 1 ? 's' : ''} for fewer overhangs` : 'Already in the best orientation found');
   }
+  app.arrange = () => arrange();
   function arrange() {
     const s = app.scene; const bed = app.view.r.bed; const gap = 6; const list = s.objects.filter((o) => o.visible !== false && !o.hole);
     const items = list.map((o) => ({ o, b: s.worldBox(o) })).filter((x) => x.b).map((x) => ({ ...x, w: x.b.max[0] - x.b.min[0], d: x.b.max[1] - x.b.min[1] })).sort((a, b) => b.d - a.d || b.w - a.w);

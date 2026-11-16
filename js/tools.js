@@ -87,6 +87,115 @@ export function install(app) {
     setTimeout(() => document.querySelector('#inspector details.cut')?.scrollIntoView({ block: 'nearest' }), 0);
   };
 
+  // ------------------------------------------------------------ resizable side panels
+  const root = document.getElementById('app'); const PKEY = 'printforge.panels';
+  const DEF = { left: 268, right: 292 }, MIN = { left: 210, right: 240 };
+  let sizes = { ...DEF }; try { Object.assign(sizes, JSON.parse(localStorage.getItem(PKEY) || '{}')); } catch { /* private mode */ }
+  const maxW = () => Math.max(300, Math.floor(window.innerWidth * 0.42));
+  const applySizes = (save) => {
+    for (const k of ['left', 'right']) { sizes[k] = Math.round(Math.min(maxW(), Math.max(MIN[k], sizes[k]))); root.style.setProperty(`--${k}-size`, `${sizes[k]}px`); }
+    splitters.forEach((el) => el.setAttribute('aria-valuenow', String(sizes[el.dataset.side])));
+    if (save) try { localStorage.setItem(PKEY, JSON.stringify(sizes)); } catch { /* ignore */ }
+  };
+  const splitters = ['left', 'right'].map((side) => {
+    const el = h('div', { class: `splitter splitter-${side}`, 'data-side': side, role: 'separator', 'aria-orientation': 'vertical', 'aria-label': `Resize the ${side === 'left' ? 'library' : 'properties'} panel`, tabindex: '0', title: 'Drag to resize. Double-click to reset.', 'aria-valuemin': String(MIN[side]) });
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add('drag'); document.body.classList.add('resizing');
+      const x0 = e.clientX, w0 = sizes[side];
+      const move = (ev) => { sizes[side] = w0 + (side === 'left' ? ev.clientX - x0 : x0 - ev.clientX); applySizes(false); };
+      const up = () => { el.removeEventListener('pointermove', move); el.classList.remove('drag'); document.body.classList.remove('resizing'); applySizes(true); };
+      el.addEventListener('pointermove', move); el.addEventListener('pointerup', up, { once: true }); el.addEventListener('pointercancel', up, { once: true });
+    });
+    el.addEventListener('dblclick', () => { sizes[side] = DEF[side]; applySizes(true); });
+    el.addEventListener('keydown', (e) => { const d = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0; if (!d) return; e.preventDefault(); e.stopPropagation(); sizes[side] += (side === 'left' ? d : -d) * (e.shiftKey ? 40 : 10); applySizes(true); });
+    root.appendChild(el); return el;
+  });
+  applySizes(false); window.addEventListener('resize', () => applySizes(false));
+
+  // ------------------------------------------------------------ collapsible panels and focus mode
+  const PANEL_KEY = 'printforge.panelsHidden';
+  let hidden = { left: false, right: false }; try { Object.assign(hidden, JSON.parse(localStorage.getItem(PANEL_KEY) || '{}')); } catch { /* ignore */ }
+  const applyHidden = () => {
+    root.classList.toggle('hide-left', hidden.left); root.classList.toggle('hide-right', hidden.right);
+    focusBtn?.classList.toggle('on', hidden.left && hidden.right);
+    try { localStorage.setItem(PANEL_KEY, JSON.stringify(hidden)); } catch { /* ignore */ }
+  };
+  app.togglePanel = (side) => { hidden[side] = !hidden[side]; applyHidden(); };
+  app.toggleFocus = () => { const both = hidden.left && hidden.right; hidden.left = hidden.right = !both; applyHidden(); app.toast(both ? 'Panels back.' : 'Focus on the model: press \\ to bring the panels back.'); };
+  const nav = document.querySelector('.viewnav');
+  const focusBtn = h('button', { title: 'Focus on the model: hide both panels (\\)', 'aria-label': 'Focus on the model', onclick: () => app.toggleFocus(), html: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg><span>Focus</span>' });
+  nav?.appendChild(focusBtn);
+  for (const side of ['left', 'right']) {
+    // small tab on the panel edge to fold it away / bring it back
+    const tab = h('button', { class: `panel-tab panel-tab-${side}`, title: `${side === 'left' ? 'Hide or show the library' : 'Hide or show the properties'} (${side === 'left' ? '[' : ']'})`, 'aria-label': `Toggle the ${side === 'left' ? 'library' : 'properties'} panel`, onclick: () => app.togglePanel(side), html: '<svg viewBox="0 0 24 24"><path d="M14 7l-5 5 5 5"/></svg>' });
+    root.appendChild(tab);
+  }
+  applyHidden();
+
+  // ------------------------------------------------------------ section view (clipping plane)
+  const sec = { axis: 2, t: 0.5, flip: false, on: false };
+  const secBar = h('div', { class: 'layerbar secbar', id: 'secbar', hidden: true },
+    h('b', {}, 'Section'), h('div', { class: 'seg mini', role: 'group', 'aria-label': 'Cut across' }, ...['X', 'Y', 'Z'].map((a, i) => h('button', { 'data-axis': String(i), onclick: () => { sec.axis = i; applySec(); } }, a))),
+    h('input', { type: 'range', id: 'secSlider', min: '0', max: '1', step: '0.001', value: '0.5', 'aria-label': 'Section position', oninput: (e) => { sec.t = +e.target.value; applySec(); } }),
+    h('output', { id: 'secOut' }), h('button', { class: 'btn', title: 'Look from the other side', onclick: () => { sec.flip = !sec.flip; applySec(); } }, 'Flip'),
+    h('button', { class: 'btn', onclick: () => app.toggleSection(false) }, 'Off'));
+  stage.appendChild(secBar);
+  const sceneBox = () => { const s = app.scene; const list = s.objects.filter((o) => o.visible !== false); const bb = list.length ? s.selectionBox(list) : null; return bb || { min: [-50, -50, 0], max: [50, 50, 50] }; };
+  function applySec() {
+    const bb = sceneBox(); const a = sec.axis; const lo = bb.min[a] - 0.01, hi = bb.max[a] + 0.01; const v = lo + (hi - lo) * sec.t;
+    const n = [0, 0, 0]; n[a] = sec.flip ? -1 : 1; app.view.r.section = sec.on ? { n, d: sec.flip ? -v : v } : null;
+    secBar.querySelectorAll('[data-axis]').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.axis === a)));
+    document.getElementById('secOut').textContent = `${'XYZ'[a]} = ${v.toFixed(1)} mm`;
+    app.view.redraw();
+  }
+  app.toggleSection = (on = !sec.on) => {
+    sec.on = on && app.mode === 'design'; secBar.hidden = !sec.on; applySec(); sync?.();
+    bar.querySelector('[data-act="section"]')?.classList.toggle('on', sec.on);
+    if (sec.on) app.toast('Section view: drag the slider to cut through the parts. Cut faces show in orange.');
+  };
+  app.on('mode', () => { if (sec.on && app.mode !== 'design') app.toggleSection(false); });
+  app.on('change', () => { if (sec.on) applySec(); });
+  bar.insertBefore(h('button', { 'data-act': 'section', title: 'Section view: cut through the model on X, Y or Z (X)', 'aria-label': 'Section view (X)', html: '<svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M3 14l18-6" stroke-dasharray="2.5 2"/></svg><span>Section</span><kbd>X</kbd>', onclick: () => app.toggleSection() }), bar.querySelector('[data-act="measure"]'));
+
+  // ------------------------------------------------------------ right-click menu
+  let menu = null;
+  const closeMenu = () => { menu?.remove(); menu = null; };
+  document.addEventListener('pointerdown', (e) => { if (menu && !menu.contains(e.target)) closeMenu(); }, true);
+  document.addEventListener('keydown', (e) => { if (menu && e.key === 'Escape') { e.stopPropagation(); closeMenu(); } }, true);
+  window.addEventListener('blur', closeMenu);
+  app.showContextMenu = (x, y, obj) => {
+    closeMenu(); const s = app.scene; const sel = s.selected(); const one = sel.length === 1 ? sel[0] : null;
+    const item = (label, key, run, opts = {}) => h('button', { role: 'menuitem', class: opts.danger ? 'danger' : '', disabled: !!opts.disabled, onclick: () => { closeMenu(); run(); } }, h('span', {}, label), key ? h('kbd', {}, key) : null);
+    const sep = () => h('div', { class: 'cm-sep', role: 'separator' });
+    const centre = () => { const bb = s.selectionBox(sel); if (!bb) return; const dx = -(bb.min[0] + bb.max[0]) / 2, dy = -(bb.min[1] + bb.max[1]) / 2; s.edit('centre on the plate', () => sel.forEach((o) => { o.pos = [o.pos[0] + dx, o.pos[1] + dy, o.pos[2] - bb.min[2]]; })); app.view.fit(); };
+    const kids = obj && sel.length ? [
+      h('div', { class: 'cm-title' }, one ? one.name : `${sel.length} parts`),
+      item('Centre on the plate', '', centre), item('Drop to the plate', 'D', () => app.cmd('drop')), item('Lay on face', 'F', () => app.setTool('flatten')), item('Turn 90°', 'Shift R', () => app.cmd('rotZ')),
+      sep(), item('Duplicate', mod('D'), () => app.cmd('duplicate')), item(one?.hole ? 'Make solid' : 'Make a hole', 'H', () => app.cmd('toggleHole')),
+      sel.length > 1 ? item('Group', mod('G'), () => app.cmd('group')) : null, sel.length > 1 ? item('Mesh boolean…', 'B', () => app.openBoolean()) : null,
+      one ? item('Cut in two…', 'C', () => app.openCut()) : null, one ? item('Texture…', '', () => app.openTexture?.()) : null,
+      app.canMakeMany?.(one || {}) ? item('Make many at once…', '', () => app.makeMany(one)) : null,
+      sep(), item('Hide', '', () => s.edit('hide', () => sel.forEach((o) => { o.visible = false; }))), item('Export selection as STL', '', () => app.cmd('export:sel-stl')),
+      item('Auto-arrange the plate', '', () => app.arrange?.()), sep(), item('Delete', 'Del', () => app.cmd('delete'), { danger: true }),
+    ] : [
+      item('Fit everything', 'Z', () => app.view.fit()), item('Select all', mod('A'), () => app.cmd('selectAll'), { disabled: !s.objects.length }),
+      item('Auto-arrange the plate', '', () => app.arrange?.(), { disabled: !s.objects.length }), item('Show hidden parts', '', () => s.edit('show all', () => s.objects.forEach((o) => { o.visible = true; })), { disabled: !s.objects.some((o) => o.visible === false) }),
+      sep(), item('Add a box', '', () => app.addShape('box')), item('Import a file…', mod('I'), () => app.cmd('import')), item('Search every tool…', mod('K'), () => app.openPalette?.()),
+      sep(), item(sec.on ? 'Turn off section view' : 'Section view', 'X', () => app.toggleSection()), item('Focus on the model', '\\', () => app.toggleFocus()),
+    ];
+    menu = h('div', { class: 'ctx-menu', role: 'menu', 'aria-label': 'Actions' }, ...kids.filter(Boolean));
+    document.body.appendChild(menu);
+    const r = menu.getBoundingClientRect(); menu.style.left = `${Math.min(x, innerWidth - r.width - 6)}px`; menu.style.top = `${Math.min(y, innerHeight - r.height - 6)}px`;
+    menu.querySelector('button:not(:disabled)')?.focus();
+    menu.addEventListener('keydown', (e) => { const bs = [...menu.querySelectorAll('button:not(:disabled)')]; const i = bs.indexOf(document.activeElement); if (e.key === 'ArrowDown') { e.preventDefault(); bs[(i + 1) % bs.length]?.focus(); } if (e.key === 'ArrowUp') { e.preventDefault(); bs[(i - 1 + bs.length) % bs.length]?.focus(); } e.stopPropagation(); });
+  };
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent); function mod(k) { return isMac ? `⌘${k}` : `Ctrl ${k}`; }
+  // keyboard: Shift+F10 or the context-menu key opens the menu for the selection
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && app.mode === 'design') { e.preventDefault(); const r = app.view.canvas.getBoundingClientRect(); app.showContextMenu(r.left + r.width / 2, r.top + r.height / 2, app.scene.selected()[0] || null); }
+  });
+
   // ------------------------------------------------------------ lay on face
   app.layOnFace = (o, n) => {
     const s = app.scene; if (!o) return;

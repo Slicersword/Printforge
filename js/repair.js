@@ -1,4 +1,4 @@
-// Make a watertight solid from a leaky or messy triangle mesh (typical of AI-generated models).
+// Make a watertight solid from a leaky or messy triangle mesh (typical of scans and downloaded models).
 // Voxelises the mesh with rays along X, Y and Z (majority vote, so a few holes don't matter),
 // then rebuilds a clean surface with Manifold's level-set mesher.
 

@@ -29,7 +29,8 @@ function classify(name) {
 }
 
 /** Parse G-code text into segments. Returns typed arrays plus header info. */
-export function parseGcode(text) {
+/** Parse G-code. Large files are read in chunks (yielding to the browser), with progress and an early partial result. */
+export async function parseGcode(text, { onProgress, onPartial } = {}) {
   let x = 0, y = 0, z = 0, e = 0, f = 1500; let absXYZ = true, absE = true, unit = 1;
   let type = FIDX.other; let layerZ = null;
   // Segments: x0 y0 z0 x1 y1 z1, plus type, layer, feed, extrude flag.
@@ -47,8 +48,15 @@ export function parseGcode(text) {
     meta[n * 3] = type; meta[n * 3 + 1] = Math.max(0, layers.length - 1); meta[n * 3 + 2] = f; ext[n] = extr ? 1 : 0;
     info.timeEst += Math.hypot(x1 - x0, y1 - y0, z1 - z0) / Math.max(f / 60, 1); n++;
   };
-  const lines = text.split('\n');
+  const lines = text.split('\n'); const CHUNK = 60000; let shown = false;
+  const snap = () => ({ seg: seg.subarray(0, n * 6), meta: meta.subarray(0, n * 3), ext: ext.subarray(0, n), count: n, layers: layers.slice(), info, partial: true });
   for (let li = 0; li < lines.length; li++) {
+    if (li && li % CHUNK === 0) {
+      onProgress?.(li / lines.length);
+      // show the first layers as soon as there are some, then keep reading in the background
+      if (!shown && onPartial && layers.length >= 10) { shown = true; onPartial(snap()); }
+      await new Promise((r) => setTimeout(r, 0));
+    }
     let line = lines[li]; const sc = line.indexOf(';');
     if (sc >= 0) {
       const c = line.slice(sc + 1).trim();
@@ -126,7 +134,7 @@ export function install(app) {
   const st = { data: null, name: '', show: new Set(FEATURES.map((f) => f.id)), travel: false, colorBy: 'feature', top: Infinity, only: false, progress: 1, offset: [0, 0] };
   app.gcode = st;
   const bar = document.getElementById('gcodebar'); const slider = document.getElementById('gcLayer'); const out = document.getElementById('gcLayerOut');
-  const moves = document.getElementById('gcMoves'); const onlyBox = document.getElementById('gcOnly');
+  const moves = document.getElementById('gcMoves'); const onlyBox = document.getElementById('gcOnly'); const vbar = document.getElementById('gcLayers');
 
   app.openGcode = () => document.getElementById('fileGcode').click();
   document.getElementById('fileGcode').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) load(f); e.target.value = ''; });
@@ -141,20 +149,27 @@ export function install(app) {
         if (!g) throw new Error('this 3MF has no sliced G-code inside. In your slicer, use “Export plate sliced file”, or import it as a model instead.');
         text = new TextDecoder().decode(await z.read(g));
       } else text = await file.text();
-      const t0 = performance.now();
-      const data = parseGcode(text);
+      const t0 = performance.now(); const big = text.length > 3e6; // read big files in chunks and show the first layers early
+      const show = (data, partial) => {
+        st.data = data; st.text = text; st.name = file.name; st.top = data.layers.length - 1; st.only = false; st.progress = 1; st.loading = partial;
+        // Most firmware puts 0,0 at the plate's front-left corner; the view's plate is centred.
+        let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+        for (let i = 0; i < data.count; i++) if (data.ext[i]) { const o = i * 6; for (const k of [0, 3]) { lo[0] = Math.min(lo[0], data.seg[o + k]); hi[0] = Math.max(hi[0], data.seg[o + k]); lo[1] = Math.min(lo[1], data.seg[o + k + 1]); hi[1] = Math.max(hi[1], data.seg[o + k + 1]); } }
+        const bed = app.view.r.bed; st.offset = lo[0] > -5 && lo[1] > -5 ? [-bed.w / 2, -bed.d / 2] : [0, 0];
+        st.bounds = { lo, hi }; build(); bar.hidden = false; vbar.hidden = false;
+        if (app.mode !== 'preview') app.setMode('preview'); else app.refresh();
+        return { lo, hi };
+      };
+      let framed = false;
+      const data = await parseGcode(text, big ? {
+        onProgress: (f) => { out.textContent = `reading ${Math.round(f * 100)}%`; app.toast(`Reading ${file.name}… ${Math.round(f * 100)}%`, 1500); },
+        onPartial: (part) => { const { lo, hi } = show(part, true); framed = true; app.view.r.frame({ min: [lo[0] + st.offset[0], lo[1] + st.offset[1], 0], max: [hi[0] + st.offset[0], hi[1] + st.offset[1], part.layers[part.layers.length - 1] * 4] }, true); app.view.redraw(); },
+      } : {});
       if (!data.layers.length) { app.toast('No extrusion moves found in this file. Is it G-code from a slicer?', 4500); return; }
-      st.data = data; st.name = file.name; st.top = data.layers.length - 1; st.only = false; st.progress = 1;
-      // Most firmware puts 0,0 at the plate's front-left corner; the view's plate is centred.
-      let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
-      for (let i = 0; i < data.count; i++) if (data.ext[i]) { const o = i * 6; for (const k of [0, 3]) { lo[0] = Math.min(lo[0], data.seg[o + k]); hi[0] = Math.max(hi[0], data.seg[o + k]); lo[1] = Math.min(lo[1], data.seg[o + k + 1]); hi[1] = Math.max(hi[1], data.seg[o + k + 1]); } }
-      const bed = app.view.r.bed; st.offset = lo[0] > -5 && lo[1] > -5 ? [-bed.w / 2, -bed.d / 2] : [0, 0];
-      st.bounds = { lo, hi };
-      build();
-      bar.hidden = false;
-      if (app.mode !== 'preview') app.setMode('preview'); else app.refresh();
+      show(data, false);
+      const { lo, hi } = st.bounds;
       const z = data.layers[data.layers.length - 1];
-      app.view.r.frame({ min: [lo[0] + st.offset[0], lo[1] + st.offset[1], 0], max: [hi[0] + st.offset[0], hi[1] + st.offset[1], z] }, true); app.view.redraw();
+      if (!framed) app.view.r.frame({ min: [lo[0] + st.offset[0], lo[1] + st.offset[1], 0], max: [hi[0] + st.offset[0], hi[1] + st.offset[1], z] }, true); app.view.redraw();
       app.toast(`Loaded ${data.layers.length} layers in ${Math.round(performance.now() - t0)} ms`);
     } catch (e) { console.error(e); app.toast(`${file.name}: ${e.message}`, 5000); }
   }
@@ -214,7 +229,7 @@ export function install(app) {
     st.nozzle = null;
     if (ec > 0) { const q = (ea + ec - 1) * 3; st.nozzle = [st.ext.pos[q], st.ext.pos[q + 1], st.ext.pos[q + 2]]; }
     slider.max = String(nL - 1); slider.value = String(top); onlyBox.checked = st.only; moves.value = String(Math.round(st.progress * 100));
-    out.textContent = `${top + 1} / ${nL} · ${fmt(d.layers[top], 2)} mm`;
+    out.textContent = `${top + 1} / ${nL}\n${fmt(d.layers[top], 2)} mm`;
     app.view.redraw();
   }
   slider.addEventListener('input', () => { st.top = +slider.value; st.progress = 1; updateRanges(); });
@@ -234,7 +249,7 @@ export function install(app) {
     extras.gcode = { sets: st.sets };
     if (st.nozzle && (st.progress < 1 || playing)) { const [x, y, z] = st.nozzle; const s = 2.5; extras.lines.push({ data: new Float32Array([x - s, y, z, x + s, y, z, x, y - s, z, x, y + s, z, x, y, z, x, y, z + 6]), color: [1, 0.35, 0.1, 1], noDepth: true }); }
   });
-  app.on('mode', (m) => { bar.hidden = m !== 'preview' || !st.data; if (m !== 'preview') stop(); if (m === 'preview' && st.data) { build(); } });
+  app.on('mode', (m) => { bar.hidden = vbar.hidden = m !== 'preview' || !st.data; if (m !== 'preview') stop(); if (m === 'preview' && st.data) { build(); } });
   app.on('theme', () => { if (st.data) build(); });
 
   app.previewPanel = () => {
@@ -268,7 +283,8 @@ export function install(app) {
         : h('fieldset', {}, h('legend', {}, 'Speed'), h('div', { class: 'ramp' }), h('div', { class: 'ramp-labels' }, h('span', {}, `${fmt(st.speedRange[0] / 60, 0)} mm/s`), h('span', {}, `${fmt(st.speedRange[1] / 60, 0)} mm/s`))),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: st.travel, onchange: (e) => { st.travel = e.target.checked; build(); } }), 'Show travel moves'),
       openBtn,
-      h('button', { class: 'btn wide', onclick: () => { st.data = null; st.sets = null; bar.hidden = true; app.refresh(); app.view.redraw(); } }, 'Close file'),
+      app.openPrinter ? h('button', { class: 'btn primary wide', onclick: () => app.openPrinter() }, 'Send to printer…') : null,
+      h('button', { class: 'btn wide', onclick: () => { st.data = null; st.text = null; st.sets = null; bar.hidden = true; vbar.hidden = true; app.refresh(); app.view.redraw(); } }, 'Close file'),
       h('p', { class: 'note' }, 'Drag the layer slider below, or press Play to watch the nozzle. The time and filament come from the slicer\'s notes in the file when it has them.'),
     ];
   };

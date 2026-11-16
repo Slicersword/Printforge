@@ -31,6 +31,7 @@
       <span class="brand-name">PrintForge</span>
     </div>
     <input id="docName" class="doc-name" value="Untitled design" aria-label="Design name" spellcheck="false">
+    <span id="saveState" class="save-state" role="status" aria-live="polite"></span>
     <nav class="menu" aria-label="File">
       <button data-cmd="new" title="New design">New</button>
       <button data-cmd="open" title="Open a .pforge project (Ctrl+O)">Open</button>
@@ -57,7 +58,6 @@
       <button role="tab" data-mode="prepare" aria-selected="false"><span class="long">Prepare to print</span><span class="short">Prepare</span></button>
       <button role="tab" data-mode="preview" aria-selected="false"><span class="long">G-code preview</span><span class="short">G-code</span></button>
     </div>
-    <button class="ai-btn" data-cmd="ai" title="Describe a part and let AI design it"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M18.5 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg><span>AI</span></button>
     <button class="search-btn" data-cmd="palette" title="Search every tool (Ctrl+K)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span>Search tools</span><kbd>Ctrl K</kbd></button>
     <div class="top-right">
       <div class="dropdown">
@@ -80,7 +80,7 @@
   <main class="stage" id="stage">
     <canvas id="view" tabindex="0" aria-label="3D view. Drag to orbit, scroll to zoom."></canvas>
     <div class="viewnav" aria-label="Camera">
-      <button data-view="home" title="Fit everything (F)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span></button>
+      <button data-view="home" title="Fit everything (Z)"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Fit</span></button>
       <button data-view="top" title="Top (7)"><svg viewBox="0 0 24 24"><path d="M12 4l8 4-8 4-8-4z" fill="currentColor" fill-opacity=".35"/><path d="M4 8v8l8 4 8-4V8"/></svg><span>Top</span></button>
       <button data-view="front" title="Front (1)"><svg viewBox="0 0 24 24"><path d="M4 8l8 4v8l-8-4z" fill="currentColor" fill-opacity=".35"/><path d="M4 8l8-4 8 4v8l-8 4M12 12l8-4"/></svg><span>Front</span></button>
       <button data-view="right" title="Right (3)"><svg viewBox="0 0 24 24"><path d="M12 12l8-4v8l-8 4z" fill="currentColor" fill-opacity=".35"/><path d="M12 12L4 8l8-4 8 4M4 8v8l8 4"/></svg><span>Right</span></button>
@@ -96,12 +96,14 @@
     </div>
     <div class="layerbar gcodebar" id="gcodebar" hidden>
       <button class="btn" id="gcPlay" aria-pressed="false">Play</button>
-      <label for="gcLayer">Layer</label>
-      <input type="range" id="gcLayer" min="0" max="0" value="0">
-      <output id="gcLayerOut"></output>
-      <label class="mini" for="gcMoves">Moves</label>
-      <input type="range" id="gcMoves" min="0" max="100" value="100" title="How much of the top layer is drawn">
+      <label for="gcMoves">Moves in this layer</label>
+      <input type="range" id="gcMoves" min="0" max="100" value="100" title="Scrub through the toolpath of the top layer">
       <label class="mini only"><input type="checkbox" id="gcOnly"> This layer only</label>
+    </div>
+    <div class="gclayers" id="gcLayers" hidden>
+      <output id="gcLayerOut"></output>
+      <input type="range" id="gcLayer" min="0" max="0" value="0" aria-label="Layer (height)" title="Scrub up and down through the layers">
+      <span class="gcl-label">Layer</span>
     </div>
     <div class="empty-hint" id="emptyHint">
       <p class="eh-title">What are you making?</p>
@@ -115,7 +117,7 @@
     </div>
     <div class="empty-hint preview-hint" id="previewHint" hidden>
       <p class="eh-title">Preview your sliced file</p>
-      <p>Open a .gcode file from any slicer to check every layer before you print.</p>
+      <p>Already sliced your model? Open the G-code here to check every layer, then send it to your printer. To make G-code, export your design (3MF or STL) and slice it in your slicer.</p>
       <div class="quick one"><button data-cmd="gcode"><b>Open G-code…</b><span>or drop it on the plate</span></button></div>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -135,7 +137,7 @@
 <input type="file" id="fileOpen" accept=".pforge,.json" hidden>
 <input type="file" id="fileImport" accept=".stl,.obj,.3mf,.glb,.gcode,.gco" multiple hidden>
 <input type="file" id="fileGcode" accept=".gcode,.gco,.g,.3mf" hidden>
-<div id="loading" class="loading"><div class="spinner"></div><p>Loading the geometry engine…</p></div>
+<div id="loading" class="loading" role="status" aria-live="polite"><div class="spinner"></div><p id="loadMsg">Loading the geometry engine…</p><div class="load-track" aria-hidden="true"><div id="loadBar" class="load-bar"></div></div><noscript><p>PrintForge needs JavaScript.</p></noscript></div>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

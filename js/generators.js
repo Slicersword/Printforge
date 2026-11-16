@@ -278,24 +278,37 @@ gen('tag', {
 });
 
 // ------------------------------------------------------------------ LED strip channel (after usestl's LED Channel)
-// Profile: U channel with support ledges and chamfered snap lips; the diffuser clicks in under the lips.
+// Profile: U channel with chamfered bottom edges and a snap groove in each wall. The diffuser is a cover that
+// sits on top with two flexible legs; barbs on the legs click into the grooves (push it straight down).
 function ledDims(p) {
-  const W = p.strip + 0.8, wall = p.wall, Wo = W + 2 * wall, lipH = 0.8, lip = 0.6, dT = p.dT;
-  const zl = p.h - lipH - dT - 2 * p.clr; // top of the ledges the diffuser rests on
-  return { W, wall, Wo, lipH, lip, dT, zl };
+  const W = p.strip + 1, wall = p.wall, Wo = W + 2 * wall; // 0.5 mm play each side of the strip
+  const Wt = W + 0.6;                    // opening at the top (walls step back 0.3 mm above the groove)
+  const g0 = p.h - 4.45;                 // bottom of the groove
+  const ct = p.dT, Wc = Math.min(Wo - 1.2, Wt + 2.2); // cover thickness and width (rests on the wall tops)
+  const lt = 1.3;                        // leg thickness
+  return { W, wall, Wo, Wt, g0, ct, Wc, lt };
 }
 function ledProfile(p, K) {
-  const { W, Wo, lipH, lip, zl } = ledDims(p); const CS = K.CrossSection;
-  if (zl < p.floor + 1.5) throw new Error(`Channel height is too low for this diffuser. Make it at least ${(p.h - zl + p.floor + 1.5).toFixed(1)} mm.`);
-  let prof = CS.square([Wo, p.h]).translate([-Wo / 2, 0]).subtract(CS.square([W, p.h]).translate([-W / 2, p.floor]));
-  const tri = (pts) => CS.ofPolygons([pts]);
-  for (const sgn of [-1, 1]) {
-    const x = sgn * W / 2, d = -sgn * lip; // d points inward
-    const ledge = [[x, zl - 0.9], [x + d, zl], [x, zl]]; const lipP = [[x, p.h], [x + d, p.h - 0.35], [x + d, p.h - lipH], [x, p.h - lipH]];
-    const fix = (q) => (sgn > 0 ? q : q.slice().reverse());
-    prof = prof.add(tri(fix(ledge))).add(tri(fix(lipP)));
-  }
-  return prof;
+  const { W, Wo, Wt, g0 } = ledDims(p); const CS = K.CrossSection;
+  if (g0 < p.floor + 2.4) throw new Error(`Channel height is too low for the snap-in diffuser. Make it at least ${(p.floor + 2.4 + 4.45).toFixed(2)} mm.`);
+  if (p.wall < 1.4) throw new Error('Walls need to be at least 1.4 mm for the snap groove.');
+  const c = 0.4; // bottom edge chamfer (helps with elephant's foot)
+  const outer = CS.ofPolygons([[[-Wo / 2 + c, 0], [Wo / 2 - c, 0], [Wo / 2, c], [Wo / 2, p.h], [-Wo / 2, p.h], [-Wo / 2, c]]]);
+  // inner cavity with the groove: in at 45°, straight, back out, then the slightly wider top opening
+  const half = []; const x0 = W / 2, gd = 0.8;
+  half.push([x0, p.floor], [x0, g0], [x0 + gd, g0 + gd], [x0 + gd, g0 + gd + 0.6], [Wt / 2, g0 + 2 * gd + 0.6], [Wt / 2, p.h + 1]);
+  const cav = CS.ofPolygons([[...half, ...half.slice().reverse().map(([x, y]) => [-x, y])]]);
+  return outer.subtract(cav);
+}
+function ledDiffuserProfile(p, K) {
+  const { Wt, g0, ct, Wc, lt } = ledDims(p); const CS = K.CrossSection; const cl = Math.max(0.05, p.clr);
+  const r = Math.min(0.6, ct / 2 - 0.05);
+  const cover = CS.square([Wc - 2 * r, ct - r]).translate([-(Wc - 2 * r) / 2, p.h]).offset(r, 'Round', 2, 16).intersect(CS.square([Wc + 2, ct + 2]).translate([-Wc / 2 - 1, p.h]));
+  const legX = Wt / 2 - cl; const zb = g0 + 0.15; const gd = 0.8;
+  const leg = (s) => { const o = s * legX, i = s * (legX - lt); const barb = s * (legX + gd - 0.1 - cl);
+    const pts = [[i, p.h + 0.01], [i, zb], [o, zb], [barb, g0 + gd + 0.15], [barb, g0 + gd + 0.5], [o, g0 + 2 * gd + 0.6], [o, p.h + 0.01]];
+    return CS.ofPolygons([s > 0 ? pts : pts.slice().reverse()]); };
+  return CS.union([cover, leg(1), leg(-1)]);
 }
 function along(cs, L, K) { return cs.extrude(L).rotate([90, 0, 0]).rotate([0, 0, 90]).translate([-L / 2, 0, 0]); }
 function mitreCut(m, p, K, Wo) {
@@ -306,9 +319,12 @@ function mitreCut(m, p, K, Wo) {
   return m;
 }
 function ledCap(p, K, kind) {
-  const { W, Wo } = ledDims(p); const t = 2, plug = 6, cl = Math.max(0.1, p.clr);
-  const plate = K.Manifold.cube([t, Wo, p.h]).translate([-t, -Wo / 2, 0]);
-  const plugM = K.Manifold.cube([plug, W - 2 * cl, Math.max(1, ledDims(p).zl - p.floor - cl)]).translate([0, -(W - 2 * cl) / 2, p.floor + cl]);
+  const { W, Wo, g0, ct } = ledDims(p); const t = 2, plug = 8, cl = Math.max(0.1, p.clr);
+  const CS = K.CrossSection;
+  // end plate covers the channel and the diffuser cover; the plug fills the strip space below the diffuser legs
+  const plateCS = CS.square([Wo, p.h + ct]).translate([-Wo / 2, 0]);
+  const plate = plateCS.extrude(t).rotate([90, 0, 0]).rotate([0, 0, 90]).translate([-t, 0, 0]);
+  const plugM = K.Manifold.cube([plug, W - 2 * cl, g0 - p.floor - cl]).translate([0, -(W - 2 * cl) / 2, p.floor + cl / 2]);
   let cap = plate.add(plugM);
   if (kind === 'cable') cap = cap.subtract(K.Manifold.cylinder(t + plug + 2, 2.2, 2.2, 32).rotate([0, 90, 0]).translate([-t - 1, 0, p.floor + 2.2]).add(K.Manifold.cube([t + plug + 2, 4.4, 2.2]).translate([-t - 1, -2.2, p.floor])));
   return cap; // plate at x ∈ [-t, 0], plug pointing +x (into the channel)
@@ -318,18 +334,22 @@ gen('ledchannel', {
   icon: gicon('<path d="M3 13h26v8H3z"/><path d="M3 13l2-2h22l2 2"/><path d="M8 17h2M14 17h2M20 17h2" stroke-width="2"/>'),
   keepOrigin: true,
   multi: [['channel', 'Channel', '#16D8AA'], ['diffuser', 'Diffuser', '#F3F3F0'], ['caps', 'End caps', '#16D8AA'], ['joiner', 'Joiner', '#16D8AA']],
-  params: [n('len', 'Length of each piece', 200, 20, 1000), n('strip', 'LED strip width', 10, 3, 40, 0.5), n('h', 'Channel height', 9.25, 5, 40, 0.25), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
-    n('wall', 'Wall', 1.2, 0.8, 3, 0.1), n('floor', 'Floor', 1.2, 0.8, 4, 0.1), n('dT', 'Diffuser thickness', 1.2, 0.6, 3, 0.1),
+  params: [n('len', 'Length of each piece', 200, 20, 1000), n('strip', 'LED strip width', 10, 3, 40, 0.5), n('h', 'Channel height', 9.25, 8.25, 40, 0.25), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
+    n('wall', 'Wall', 2.2, 1.4, 4, 0.1), n('floor', 'Floor', 1.4, 0.8, 4, 0.1), n('dT', 'Diffuser cover thickness', 1.45, 0.6, 3, 0.05),
     sel('startEnd', 'Start end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('startCap', 'Start cap', 'cable', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
     sel('finishEnd', 'Finish end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('finishCap', 'Finish cap', 'smooth', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
-    int('holes', 'M3 mounting holes', 0, 0, 20), int('joiners', 'Joiners', 1, 0, 10), sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], ['separate', 'Separate parts (to print)']]),
+    int('holes', 'M3 mounting holes', 0, 0, 20), int('joiners', 'Joiners', 1, 0, 10), n('jlen', 'Joiner length', 30, 15, 80, 1), sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], ['separate', 'Separate parts (to print)']]),
     sel('part', 'This object is the', 'channel', [['channel', 'Channel'], ['diffuser', 'Diffuser'], ['caps', 'End caps'], ['joiner', 'Joiner']])],
   build: (p, K) => {
-    const { W, Wo, zl, dT } = ledDims(p); const sep = p.layout === 'separate'; const M = K.Manifold;
+    const { W, Wo, ct } = ledDims(p); const sep = p.layout === 'separate'; const M = K.Manifold;
     if (p.part === 'diffuser') {
-      let d = along(K.CrossSection.square([W - 2 * p.clr, dT]).translate([-(W - 2 * p.clr) / 2, 0]), p.len, K);
+      // leave room for the cap plates at straight, capped ends
+      const sIn = p.startEnd === 'straight' && p.startCap !== 'none' ? 0.75 : 0, fIn = p.finishEnd === 'straight' && p.finishCap !== 'none' ? 0.75 : 0;
+      let d = along(ledDiffuserProfile(p, K), p.len - sIn - fIn, K).translate([(sIn - fIn) / 2, 0, 0]);
       d = mitreCut(d, p, K, Wo);
-      return sep ? d.translate([0, Wo + 8, 0]) : d.translate([0, 0, zl + p.clr]);
+      if (!sep) return d;
+      // print it cover-down: flip, put on the bed, next to the channel
+      const f = d.rotate([180, 0, 0]); const b = f.boundingBox(); return f.translate([0, Wo + 8 - b.min[1] + Wo / 2 - Wo / 2, -b.min[2]]);
     }
     if (p.part === 'caps') {
       const caps = [];
@@ -337,27 +357,33 @@ gen('ledchannel', {
       if (p.finishEnd === 'straight' && p.finishCap !== 'none') caps.push({ c: ledCap(p, K, p.finishCap), at: p.len / 2, flip: true });
       if (!caps.length) throw new Error('No end caps: both ends are mitred or set to None.');
       const out = caps.map(({ c, at, flip }, i) => {
-        if (sep) return c.rotate([0, -90, 0]).translate([0, 0, 2]).translate([i * (p.h + 8) - p.len / 2, -(Wo + 10 + Wo / 2), 0]); // plate down on the bed
+        if (sep) return c.rotate([0, -90, 0]).translate([0, 0, 2]).translate([i * (p.h + ct + 8) - p.len / 2, -(Wo + 10 + Wo / 2), 0]); // plate down on the bed
         return (flip ? c.rotate([0, 0, 180]) : c).translate([at, 0, 0]);
       });
       return M.union(out);
     }
     if (p.part === 'joiner') {
       if (!p.joiners) throw new Error('Set Joiners to 1 or more to make joiners.');
-      const g = 0.2, jw = 1.2, jl = 30, iW = Wo + 2 * g, oW = iW + 2 * jw, jh = Math.min(p.h - 1, zl);
-      const one = M.cube([jl, oW, jh + jw]).translate([-jl / 2, -oW / 2, -jw]).subtract(M.cube([jl + 2, iW, jh + 2]).translate([-jl / 2 - 1, -iW / 2, 0]));
-      const list = Array.from({ length: p.joiners }, (_, i) => (sep ? one.translate([i * (jl + 6) - p.len / 2 + jl / 2, -(2 * Wo + 30), jw]) : one.translate([p.len / 2 + i * 0.001, 0, 0])));
+      // a sleeve that slides over the outside of two channel ends (0.2 mm play), up to just under the cover
+      const g = 0.2, jw = 1.4, jl = p.jlen, iW = Wo + 2 * g, oW = iW + 2 * jw, jh = p.h - 0.6;
+      const inner = K.CrossSection.ofPolygons([[[-iW / 2 + 0.4, -0.01], [iW / 2 - 0.4, -0.01], [iW / 2, 0.4], [iW / 2, jh + 1], [-iW / 2, jh + 1], [-iW / 2, 0.4]]]);
+      const prof = K.CrossSection.square([oW, jh + jw]).translate([-oW / 2, -jw]).subtract(inner);
+      // stops in the middle, only against the walls: both pieces butt against them and the strip still passes
+      const stop = (s) => M.cube([1.2, p.wall, jh * 0.7]).translate([-0.6, s > 0 ? Wo / 2 - p.wall : -Wo / 2, 0.4]);
+      const one = along(prof, jl, K).add(stop(1)).add(stop(-1));
+      const list = Array.from({ length: p.joiners }, (_, i) => (sep ? one.translate([i * (jl + 6) - p.len / 2 + jl / 2, -(2 * Wo + 30 + ct), jw]) : one.translate([p.len / 2 + 0.6, 0, 0])));
       return M.union(list);
     }
     let ch = along(ledProfile(p, K), p.len, K);
     ch = mitreCut(ch, p, K, Wo);
     if (p.holes > 0) {
       const usable = p.len - 30; const xs = p.holes === 1 ? [0] : Array.from({ length: p.holes }, (_, i) => -usable / 2 + usable * i / (p.holes - 1));
-      for (const x of xs) ch = ch.subtract(M.cylinder(p.floor + 2, 1.7, 1.7, 24).translate([x, 0, -1])).subtract(M.cylinder(1.8, 1.7, 3.3, 24).translate([x, 0, p.floor - 1.8 + 0.01]));
+      // countersunk from the inside, so the screw head sits flush with the floor under the strip
+      for (const x of xs) ch = ch.subtract(M.cylinder(p.floor + 2, 1.7, 1.7, 24).translate([x, 0, -1])).subtract(M.cylinder(p.floor + 0.02, 1.7, Math.min(3.1, 1.7 + p.floor), 24).translate([x, 0, -0.01]));
     }
     return ch;
   },
-  note: 'Each part is its own object with its own colour, and they share these settings. Print the channel on its back, the diffuser flat in a translucent filament, and the caps plate-down.',
+  note: 'Print the channel on its back, the diffuser cover-down in translucent filament and the caps plate-down. Push the diffuser straight down until both legs click. A joiner slides over two channel ends.',
 });
 
 // ------------------------------------------------------------------ Gridfinity baseplate sized to a drawer

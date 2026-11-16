@@ -58,10 +58,6 @@ Added after looking at how PaliCAD and Bambu Studio handle these:
 
 All of this is new MIT code using the Apache-2.0 Manifold kernel already in PrintForge — nothing is copied from PaliCAD (various licences) or Bambu Studio (AGPL), only the feature set and vernacular.
 
-## AI services (researched November 2026)
-
-See `AI-PLATFORMS.md`. Gemini, Claude, OpenAI-compatible services, Zoo Text-to-CAD, Tripo3D and TRELLIS (via the Gradio client, Apache-2.0, loaded from jsDelivr) are built in.
-
 ## Suggested next steps
 
 1. **Slice inside PrintForge** with Kiri:Moto's engine (MIT): Design → Prepare → Slice → G-code preview, all in one tab.

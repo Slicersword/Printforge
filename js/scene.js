@@ -175,9 +175,23 @@ export class Scene extends Emitter {
     return { app: 'printforge', version: 1, name: this.name, settings: this.settings, objects: this.objects.map(strip), meshes };
   }
   load(data) {
-    if (!data || !Array.isArray(data.objects)) throw new Error('This file is not a PrintForge project.');
+    // Check and decode everything first; the current design is only replaced once the file is known to be good.
+    if (!data || typeof data !== 'object' || !Array.isArray(data.objects)) throw new Error('This file is not a PrintForge project.');
+    const meshes = new Map();
+    for (const [id, m] of Object.entries(data.meshes || {})) {
+      let v, t; try { v = new Float32Array(unb64(m.v).buffer); t = new Uint32Array(unb64(m.t).buffer); } catch { throw new Error(`This project is damaged: mesh “${id}” can’t be read.`); }
+      if (v.length % 3 || t.length % 3 || t.some((i) => i * 3 >= v.length)) throw new Error(`This project is damaged: mesh “${id}” is incomplete.`);
+      meshes.set(id, { v, t });
+    }
+    const check = (o, path) => {
+      if (!o || typeof o !== 'object' || !o.id || !['shape', 'mesh', 'group'].includes(o.type)) throw new Error(`This project is damaged: object ${path} is not valid.`);
+      for (const k of ['pos', 'rot', 'scale']) if (!Array.isArray(o[k]) || o[k].length !== 3 || o[k].some((x) => typeof x !== 'number' || !isFinite(x))) throw new Error(`This project is damaged: “${o.name || o.id}” has a broken ${k === 'pos' ? 'position' : k === 'rot' ? 'rotation' : 'scale'}.`);
+      if (o.type === 'mesh' && !meshes.has(o.meshId)) throw new Error(`This project is damaged: the mesh for “${o.name || o.id}” is missing.`);
+      if (o.type === 'group') { if (!Array.isArray(o.children)) throw new Error(`This project is damaged: group “${o.name || o.id}” has no parts.`); o.children.forEach((c, i) => check(c, `${path}.${i + 1}`)); }
+    };
+    data.objects.forEach((o, i) => check(o, String(i + 1)));
     this.reset();
-    for (const [id, m] of Object.entries(data.meshes || {})) this.meshes.set(id, { v: new Float32Array(unb64(m.v).buffer), t: new Uint32Array(unb64(m.t).buffer) });
+    for (const [id, m] of meshes) this.meshes.set(id, m);
     this.objects = data.objects; this.name = data.name || 'Untitled design';
     this.settings = { ...this.settings, ...(data.settings || {}) };
     this.emit('change', { structure: true }); this.emit('select');

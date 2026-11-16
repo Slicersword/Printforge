@@ -4,6 +4,9 @@ import { kindDef } from './kernel.js';
 import { fmt, eulerMatrix, transformDir } from './math.js';
 import { PALETTE, makeShape } from './scene.js';
 
+export const IS_MAC = typeof navigator !== 'undefined' && (/Mac|iPhone|iPad/.test(navigator.platform || '') || /Mac OS X|iPhone|iPad/.test(navigator.userAgent || ''));
+/** Show shortcuts the way this computer names them (⌘ and ⌥ on a Mac). */
+export const keyName = (s) => (IS_MAC ? String(s).replace(/Ctrl\s*\+?\s*/g, '⌘').replace(/Alt\s*\+?\s*/g, '⌥') : s);
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -62,8 +65,12 @@ export function numField(value, onCommit, { step = 1, min = -Infinity, max = Inf
   inp.title = 'Type a number or a sum like 40/2+3. Arrow keys step (Shift ×10).';
   return inp;
 }
+let rowId = 0;
 export function row(label, control, unit) {
-  return h('div', { class: 'row' }, h('label', {}, label, unit ? h('span', { class: 'unit' }, ` ${unit}`) : null), control);
+  // tie the label to its control so screen readers announce it and clicking the label focuses the field
+  const target = control?.matches?.('input, select, textarea') ? control : control?.querySelector?.('input, select, textarea');
+  let forId = null; if (target) { if (!target.id) target.id = `pf-f${++rowId}`; forId = target.id; }
+  return h('div', { class: 'row' }, h('label', forId ? { for: forId } : {}, label, unit ? h('span', { class: 'unit' }, ` ${unit}`) : null), control);
 }
 
 /** Generic parameter form from a schema. onChange(newParams) fires per edit. */
@@ -126,15 +133,34 @@ export function renderOutline(app) {
   const eyeOn = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
   const eyeOff = '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 3.9M6.6 6.6C3.8 8.3 2 12 2 12s3.6 7 10 7a9.8 9.8 0 0 0 5.4-1.6"/></svg>';
   const items = [];
+  // Keyboard: the list is a listbox. Arrow keys move and select, Shift extends, Space toggles,
+  // Enter jumps to the properties, Delete removes. Only one row is in the Tab order at a time.
+  const hadFocus = ul.contains(document.activeElement);
+  const focusId = app._outlineFocus && s.objects.some((o) => o.id === app._outlineFocus) ? app._outlineFocus : ([...s.selection][0] || s.objects[0].id);
+  ul.setAttribute('role', 'listbox'); ul.setAttribute('aria-multiselectable', 'true');
+  const onKey = (e, o) => {
+    const i = s.objects.indexOf(o); const go = (j) => { const t = s.objects[Math.max(0, Math.min(s.objects.length - 1, j))]; app._outlineFocus = t.id; s.select(t.id, e.shiftKey); };
+    if (e.key === 'ArrowDown') { e.preventDefault(); go(i + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); go(i - 1); }
+    else if (e.key === 'Home') { e.preventDefault(); go(0); } else if (e.key === 'End') { e.preventDefault(); go(s.objects.length - 1); }
+    else if (e.key === ' ') { e.preventDefault(); app._outlineFocus = o.id; s.select(o.id, true); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (!s.selection.has(o.id)) s.select(o.id); document.getElementById('app').classList.add('show-right'); setTimeout(() => document.querySelector('#inspector input, #inspector select, #inspector button')?.focus(), 30); }
+    else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); if (!s.selection.has(o.id)) s.select(o.id); app._outlineFocus = s.objects[i + 1]?.id || s.objects[i - 1]?.id; app.cmd('delete'); }
+    else return;
+    e.stopPropagation();
+  };
   for (const o of s.objects) {
-    const li = h('li', { class: s.selection.has(o.id) ? 'sel' : '', onclick: (e) => s.select(o.id, e.shiftKey || e.ctrlKey || e.metaKey), ondblclick: () => app.openEditor(o), title: o._error || '' },
+    const selected = s.selection.has(o.id);
+    const li = h('li', { class: selected ? 'sel' : '', role: 'option', 'aria-selected': String(selected), tabindex: o.id === focusId ? '0' : '-1', 'data-id': o.id,
+      onclick: (e) => { app._outlineFocus = o.id; s.select(o.id, e.shiftKey || e.ctrlKey || e.metaKey); }, ondblclick: () => app.openEditor(o), onkeydown: (e) => onKey(e, o), onfocus: () => { app._outlineFocus = o.id; }, title: o._error || '' },
       h('span', { class: 'sw' + (o.hole ? ' hole' : ''), style: { background: o.color } }),
       h('span', { class: 'nm' }, o.name), o._error ? h('span', { class: 'err', title: o._error }, '!') : null,
-      h('button', { class: 'eye', title: o.visible === false ? 'Show' : 'Hide', 'aria-label': o.visible === false ? 'Show' : 'Hide', html: o.visible === false ? eyeOff : eyeOn, onclick: (e) => { e.stopPropagation(); s.update(o.id, { visible: o.visible === false }, o.visible === false ? 'show' : 'hide'); } }));
+      h('button', { class: 'eye', tabindex: '-1', title: o.visible === false ? 'Show' : 'Hide', 'aria-label': `${o.visible === false ? 'Show' : 'Hide'} ${o.name}`, html: o.visible === false ? eyeOff : eyeOn, onclick: (e) => { e.stopPropagation(); s.update(o.id, { visible: o.visible === false }, o.visible === false ? 'show' : 'hide'); } }));
     items.push(li);
     if (o.type === 'group' && s.selection.has(o.id)) for (const c of o.children) items.push(h('li', { class: 'child' }, h('span', { class: 'sw' + (c.hole ? ' hole' : ''), style: { background: c.color } }), h('span', { class: 'nm' }, c.name)));
   }
   ul.replaceChildren(...items);
+  if (hadFocus) ul.querySelector(`li[data-id="${focusId}"]`)?.focus();
 }
 
 // ---------------------------------------------------------------- inspector
@@ -188,7 +214,6 @@ export function renderInspector(app) {
       if (def.note) parts.push(h('p', { class: 'note' }, def.note));
     }
     if (def?.editor) parts.push(h('button', { class: 'btn primary', onclick: () => app.openEditor(o) }, def.editorLabel || 'Edit'));
-    if (o.kind === 'script' && app.openAI) parts.push(h('button', { class: 'btn', onclick: () => app.openAI() }, 'Change with AI…'));
     if (app.canMakeMany?.(o)) parts.push(h('button', { class: 'btn', title: 'One copy for each name in a list', onclick: () => app.makeMany(o) }, 'Make many at once…'));
   }
   if (o.type === 'group') parts.push(h('p', { class: 'note' }, `Group of ${o.children.length}: ${o.children.filter((c) => c.hole).length} hole(s) cut from ${o.children.filter((c) => !c.hole).length} solid(s).`));

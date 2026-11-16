@@ -9,9 +9,10 @@ void main(){ vec4 w = uModel*vec4(aPos,1.0); vW=w.xyz; vN=normalize(uNorm*aNor);
 const MESH_FS = `#version 300 es
 precision highp float;
 in vec3 vN; in vec3 vW; out vec4 o;
-uniform vec3 uColor, uEye; uniform float uAlpha, uHole, uSel, uOverhang, uClip, uDark, uFlip; uniform vec3 uAccent;
+uniform vec3 uColor, uEye; uniform float uAlpha, uHole, uSel, uOverhang, uClip, uDark, uFlip; uniform vec3 uAccent; uniform vec4 uSec;
 void main(){
   if (vW.z > uClip) discard;
+  if (dot(vW, uSec.xyz) > uSec.w) discard; // section view: everything past the plane is cut away
   vec3 n = normalize(vN); vec3 V = normalize(uEye - vW);
   bool back = gl_FrontFacing == (uFlip > 0.5); if (back) n = -n;
   vec3 L1 = normalize(vec3(0.45,-0.6,0.85)), L2 = normalize(vec3(-0.6,0.5,0.3));
@@ -39,8 +40,8 @@ const LINE_VS = `#version 300 es
 in vec3 aPos; uniform mat4 uModel, uVP; out vec3 vW;
 void main(){ vec4 w=uModel*vec4(aPos,1.0); vW=w.xyz; gl_Position=uVP*w; gl_Position.z -= 0.0004*gl_Position.w; }`;
 const LINE_FS = `#version 300 es
-precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; out vec4 o;
-void main(){ if (vW.z > uClip + 0.01) discard; o=uColor; }`;
+precision highp float; in vec3 vW; uniform vec4 uColor; uniform float uClip; uniform vec4 uSec; out vec4 o;
+void main(){ if (vW.z > uClip + 0.01) discard; if (dot(vW, uSec.xyz) > uSec.w + 0.01) discard; o=uColor; }`;
 const CLINE_VS = `#version 300 es
 in vec3 aPos; in vec3 aCol; uniform mat4 uVP; out vec3 vC;
 void main(){ vC=aCol; gl_Position=uVP*vec4(aPos,1.0); }`;
@@ -124,7 +125,7 @@ export class Renderer {
     this.quad = this._buf(new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]));
     this.theme = { dark: false, bg: [0.93, 0.945, 0.96], accent: [0.1, 0.62, 0.66], plate: 'studio' };
     this.bed = { w: 256, d: 256, h: 250, round: false, origin: 'centre' };
-    this.clipZ = 1e9; this.overhang = 0; this.gridStep = 10;
+    this.clipZ = 1e9; this.section = null; /* { n: [x,y,z], d } */ this.overhang = 0; this.gridStep = 10;
   }
   _buf(data, target) { const gl = this.gl; const b = gl.createBuffer(); gl.bindBuffer(target || gl.ARRAY_BUFFER, b); gl.bufferData(target || gl.ARRAY_BUFFER, data, gl.STATIC_DRAW); return b; }
   /** Free the GPU buffers of render data that won't be drawn again (previews, highlights). */
@@ -171,6 +172,7 @@ export class Renderer {
     const S = this.mesh; gl.useProgram(S.p);
     gl.uniformMatrix4fv(S.u.uVP, false, vp); gl.uniform3fv(S.u.uEye, M.eye); gl.uniform3fv(S.u.uAccent, t.accent);
     gl.uniform1f(S.u.uOverhang, this.overhang); gl.uniform1f(S.u.uClip, this.clipZ); gl.uniform1f(S.u.uDark, t.dark ? 1 : 0);
+    const sec = this.section ? [...this.section.n, this.section.d] : [0, 0, 1, 1e9]; gl.uniform4fv(S.u.uSec, sec);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1, 1);
     const opaque = items.filter((i) => !i.hole && !(i.alpha < 1)), trans = items.filter((i) => i.hole || i.alpha < 1);
     for (const it of opaque) drawMesh(it, false);
@@ -178,7 +180,7 @@ export class Renderer {
     if (extras.gcode) this._drawGcode(extras.gcode, vp);
 
     // lines: edges, bed volume, extras
-    const L = this.line; gl.useProgram(L.p); gl.uniformMatrix4fv(L.u.uVP, false, vp); gl.uniform1f(L.u.uClip, this.clipZ);
+    const L = this.line; gl.useProgram(L.p); gl.uniformMatrix4fv(L.u.uVP, false, vp); gl.uniform1f(L.u.uClip, this.clipZ); gl.uniform4fv(L.u.uSec, sec);
     const lineCol = t.dark ? [1, 1, 1, 0.22] : [0.05, 0.08, 0.12, 0.35];
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     for (const it of items) {
@@ -189,7 +191,7 @@ export class Renderer {
       gl.drawArrays(gl.LINES, 0, b.ecount);
     }
     const I = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-    gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9);
+    gl.uniformMatrix4fv(L.u.uModel, false, I); gl.uniform1f(L.u.uClip, 1e9); gl.uniform4fv(L.u.uSec, [0, 0, 1, 1e9]);
     const bedLines = this._bedLines();
     for (const ln of [bedLines, ...(extras.lines || [])]) {
       if (!ln || !ln.data.length) continue;

@@ -1,5 +1,5 @@
 // Command palette (Ctrl+K): search every tool, shape, generator, example and setting by name.
-import { h } from './ui.js';
+import { h, keyName } from './ui.js';
 import { SHAPES, icon } from './shapes.js';
 
 export function install(app) {
@@ -13,11 +13,12 @@ export function install(app) {
     ['Export selection as STL', 'Export', () => app.export('sel-stl')], ['Export each part as STL (zip)', 'Export', () => app.export('parts')],
     ['Undo', 'Edit', () => app.cmd('undo'), 'Ctrl Z'], ['Redo', 'Edit', () => app.cmd('redo'), 'Ctrl Shift Z'], ['Select all', 'Edit', () => app.cmd('selectAll'), 'Ctrl A'],
     ['Duplicate', 'Edit', () => app.cmd('duplicate'), 'Ctrl D'], ['Delete', 'Edit', () => app.cmd('delete'), 'Del'], ['Group (cut holes)', 'Edit', () => app.cmd('group'), 'Ctrl G'],
-    ['Ungroup', 'Edit', () => app.cmd('ungroup'), 'Ctrl Shift G'], ['Hole ↔ solid', 'Edit', () => app.cmd('toggleHole'), 'H'], ['Turn 90°', 'Edit', () => app.cmd('rotZ'), 'R'],
+    ['Ungroup', 'Edit', () => app.cmd('ungroup'), 'Ctrl Shift G'], ['Hole ↔ solid', 'Edit', () => app.cmd('toggleHole'), 'H'], ['Turn 90°', 'Edit', () => app.cmd('rotZ'), 'Shift R'],
     ['Drop to plate', 'Edit', () => app.cmd('drop'), 'D'], ['Split into parts', 'Edit', () => app.cmd('split')], ['Freeze as mesh', 'Edit', () => app.cmd('bake')],
     ['Boolean: Union (merge)', 'Boolean', () => app.cmd('bool:union')], ['Boolean: Subtract (A − B)', 'Boolean', () => app.cmd('bool:subtract')], ['Boolean: Intersect (shared)', 'Boolean', () => app.cmd('bool:intersect')],
-    ['Move tool', 'Transform', () => app.view.setTool('move')], ['Rotate tool', 'Transform', () => app.view.setTool('rotate')], ['Scale tool', 'Transform', () => app.view.setTool('scale')],
-    ['Measure', 'View', () => app.view.setMeasure(!app.view.measure), 'M'], ['Fit view', 'View', () => app.view.fit(), 'F'],
+    ['Measure', 'View', () => app.view.setMeasure(!app.view.measure), 'U'], ['Fit view', 'View', () => app.view.fit(), 'Z'],
+    ['Section view', 'View', () => app.toggleSection?.(), 'X'], ['Focus on the model (hide panels)', 'View', () => app.toggleFocus?.(), '\\'], ['Show or hide the library', 'View', () => app.togglePanel?.('left'), '['], ['Show or hide the properties', 'View', () => app.togglePanel?.('right'), ']'],
+    ['Recover an earlier version', 'File', () => app.cmd('recover')],
     ['Top view', 'View', () => app.view.setView('top'), '7'], ['Front view', 'View', () => app.view.setView('front'), '1'], ['Right view', 'View', () => app.view.setView('right'), '3'], ['Isometric view', 'View', () => app.view.setView('iso'), '0'],
     ['Design workspace', 'Workspace', () => app.setMode('design')], ['Prepare to print workspace', 'Workspace', () => app.setMode('prepare')], ['G-code preview workspace', 'Workspace', () => app.setMode('preview')],
     ['Theme: match system', 'Appearance', () => app.setAppearance({ theme: 'system' })], ['Theme: light', 'Appearance', () => app.setAppearance({ theme: 'light' })], ['Theme: dark', 'Appearance', () => app.setAppearance({ theme: 'dark' })],
@@ -47,7 +48,7 @@ export function install(app) {
     shown = app.actions.map((a) => ({ a, s: score(a, q) })).filter((x) => x.s > 0).sort((x, y) => y.s - x.s).slice(0, q ? 40 : 60).map((x) => x.a);
     active = Math.min(active, Math.max(0, shown.length - 1));
     list.replaceChildren(...(shown.length ? shown.map((a, i) => h('li', { role: 'option', 'aria-selected': String(i === active), onmousemove: () => { if (active !== i) { active = i; mark(); } }, onclick: () => run(a) },
-      h('span', { class: 'pal-ic', html: a.iconHtml || '' }), h('span', { class: 'pal-label' }, a.label), h('span', { class: 'pal-group' }, a.group), a.keys ? h('kbd', {}, a.keys) : null))
+      h('span', { class: 'pal-ic', html: a.iconHtml || '' }), h('span', { class: 'pal-label' }, a.label), h('span', { class: 'pal-group' }, a.group), a.keys ? h('kbd', {}, keyName(a.keys)) : null))
       : [h('li', { class: 'pal-empty' }, `Nothing matches “${q}”.`)]));
   }
   function mark() { [...list.children].forEach((li, i) => li.setAttribute('aria-selected', String(i === active))); list.children[active]?.scrollIntoView({ block: 'nearest' }); }

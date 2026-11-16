@@ -67,22 +67,6 @@ Helpers: `box`, `cyl`, `cone`, `ball`, `gear`, `thread`, `rect`, `circle`, `poly
 - **Overhang view** in red, with an adjustable angle, and a **layer slider** that cuts the model at any layer.
 - **Estimates**: weight, filament length, time and cost for PLA, PETG, ABS, ASA, TPU, nylon or PC, with your layer height, walls and infill.
 
-### Make it with AI
-Click **AI** and pick a platform. Each one keeps its own key in your browser, so switching platforms picks up the right key. Full details, free tiers and the optional relay: `docs/AI-PLATFORMS.md`.
-
-| Platform | Gives you | From |
-|---|---|---|
-| Gemini (Google AI Studio, free tier) | An editable code model | Text |
-| Claude (Anthropic API) | An editable code model | Text |
-| OpenAI-compatible (OpenAI, OpenRouter, Groq, Ollama, LM Studio) | An editable code model | Text |
-| Zoo Text-to-CAD | A CAD mesh | Text |
-| Tripo3D | A detailed mesh | Text or a picture |
-| TRELLIS on Hugging Face (free GPU) | A mesh | A picture |
-
-- Code models come with their main sizes as controls in the panel. If the AI's code fails, the error goes back to it to fix, up to twice. Select one and use **Change with AI** to ask for changes.
-- Meshes are scaled to the size you choose. Leaky meshes are rebuilt as watertight solids automatically.
-- GLB files can now be imported too.
-
 ### Image and text tools (Image tab)
 - **Stencil**: your image or text cut out of a plate, with bridges added automatically so the middles of O, A, R and so on don't fall out.
 - **Cookie cutter**: a blade that follows the outline, a rim to press on, optional ridges for inner details.
@@ -93,11 +77,21 @@ Click **AI** and pick a platform. Each one keeps its own key in your browser, so
 ### Calibration prints (Code tab)
 Tolerance test, overhang test, bridge test and retraction test, each with editable sizes.
 
+### Layout
+
+Drag the edge of the left or right panel to make it wider or narrower (double-click the edge to reset). The sizes are remembered in your browser. Move, rotate and scale handles keep the same size on screen whatever the part or window size.
+
+- **Hide a panel** with the small tab on its edge, or `[` (library) and `]` (properties). **Focus** (`\` or the Focus button) hides both so the model fills the window.
+- **Section view** (`X`): cut the view along X, Y or Z with a slider to see inside a part. Flip shows the other side. It only changes the view, not the part.
+- **Right-click** a part for its actions (centre, drop, lay on face, turn, duplicate, hole, cut, texture, hide, export, delete), or empty space for view and plate actions. Shift F10 opens the same menu from the keyboard.
+- **Objects list** works from the keyboard: arrows move the selection (Shift adds), Space toggles, Enter jumps to the properties, Delete removes.
+- Drag a file anywhere on the window; a drop zone shows what you can open.
+
 ### Layer Studio, QR codes, molds and more (ideas from usestl.com)
 
 - **Layer Studio** (Studio tab): build signs, tags and keychains layer by layer. Each layer has its own thickness and colour and holds text, icons, your own SVG or image, QR codes, rectangles, circles and polygons, an outline that follows everything above it, keyring loops that stick to the edge, and holes through every layer. Where layers overlap they interlock: the upper layer sinks into a pocket in the one below, so colours sit flush. Each layer is its own object, so a 3MF keeps the colours. Presets: QR code sign, Wi-Fi QR sign, QR keychain, name keychain, letter keychain, icon tag and door sign. Double-click a layer on the plate to edit the design again.
 - **QR codes**: links, text, Wi-Fi login, contact cards, email, phone and text messages, with error correction L/M/Q/H. The encoder is built in (no internet needed) and shows the module size so you know it will print.
-- **LED strip channel**: sized to your strip, with a snap-in diffuser, end caps (plain or with a cable exit), 45° mitres for corners, M3 mounting holes and joiners for runs longer than your bed. The channel, diffuser, caps and joiner are separate linked objects: change a setting on one and the others follow, and each keeps its own colour.
+- **LED strip channel**: sized to your strip, with a snap-in diffuser (a cover with two flexible legs whose barbs click into grooves in the walls), end caps (plain or with a cable exit), 45° mitres for corners, M3 mounting holes and joiners for runs longer than your bed. The channel, diffuser, caps and joiner are separate linked objects: change a setting on one and the others follow, and each keeps its own colour.
 - **Mold generator** (select a part, then Studio tab → Tools or Ctrl K): a two-part rigid mold split at the widest point with alignment pins, pour spout, air vents and clamp ears; a silicone mold box (optionally split in two); or a multi-cavity tray for ice, chocolate or soap.
 - **Gridfinity baseplate for a drawer**: type the drawer size; you get as many 42 mm cells as fit, padding to fill the drawer, optional magnet holes, split into pieces that fit your bed.
 - **Cost calculator**: filament, electricity, printer wear and upkeep, your time, extras, failed prints and profit margin, with the weight and time filled in from Prepare to print.
@@ -131,6 +125,9 @@ Unfolded projection (the pattern runs on around the sides), 33 patterns, smooth-
 - Toolpaths coloured by feature (outer and inner walls, infill, top and bottom, bridges, support, skirt and brim) or by speed. Turn any feature off.
 - Layer slider, a moves slider inside a layer, **This layer only**, travel moves, and **Play** to watch the nozzle.
 - Layers, height, print time and filament from the slicer's notes in the file, with a warning when the file is bigger than your plate.
+- A tall layer slider on the left of the view (current layer and height) and the moves slider along the bottom, like a slicer.
+- Large files load in steps: the first layers show while the rest is still being read.
+- **Send to printer…** uploads the open G-code to **OctoPrint** or **Klipper (Moonraker, Mainsail, Fluidd)**, and can start the print after you confirm. Your browser blocks an https page (such as GitHub Pages) from talking to a printer on plain http, so from the hosted site use **Download and open printer page**, or run PrintForge from your own computer (http://localhost) to send directly. OctoPrint needs CORS turned on; Moonraker needs this site in `cors_domains`. The API key is kept for the current tab only unless you tick Remember.
 
 ### Look and feel
 - **Appearance** menu (half-circle button): theme follows your system, or choose Light or Dark; six accent colours; Studio grey (like Bambu Studio, the default), textured, smooth black or cool build plate. Your choice is remembered.
@@ -140,7 +137,10 @@ Unfolded projection (the pattern runs on around the sides), 33 patterns, smooth-
 ### Files
 - Export **3MF** (separate parts with colours; opens in Bambu Studio, OrcaSlicer, PrusaSlicer, Cura), **STL**, **OBJ + MTL**, the selection only, or every part as its own STL in a zip.
 - Import **STL** (binary or text), **OBJ** and **3MF**, and open **G-code** for preview. Imported meshes can be cut, grouped with holes and so on.
-- Save and open projects as `.pforge` files. Your current design is also autosaved in the browser.
+- Save and open projects as `.pforge` files.
+- **Autosave**: your design is saved in the browser (IndexedDB) as you work. The label next to the name shows Saving…, Saved in this browser, or Save failed with a **Download backup** button. PrintForge also keeps the last 6 versions (every few minutes, and before New or Open); open **Recover** from Help or search to go back to one.
+- Opening a damaged project file shows what is wrong and leaves your current design untouched.
+- **Works offline** and can be installed as an app (Help → Install as app, where the browser supports it).
 
 ## Keyboard shortcuts
 
@@ -155,7 +155,9 @@ Unfolded projection (the pattern runs on around the sides), 33 patterns, smooth-
 | Turn 90° / drop to plate | Shift R / D |
 | Nudge / raise | arrows / Page Up, Page Down (Shift ×10) |
 | Undo / redo | Ctrl Z / Ctrl Shift Z |
-| Search every tool | Ctrl K |
+| Search every tool | Ctrl K (⌘K on Mac) |
+| Section view / focus / hide library / hide properties | X / \\ / [ / ] |
+| Actions menu | right-click, or Shift F10 |
 | Views | 7 top, 1 front, 3 right, 0 iso, 5 perspective/orthographic, Z fit |
 | Save / open / export STL | Ctrl S / Ctrl O / Ctrl E |
 
@@ -179,16 +181,16 @@ js/printprep.js         print checks, orientation, arrangement, estimates
 js/gcode.js             G-code reader and layer preview
 js/palette.js           Ctrl K command search
 js/makers.js            stencil, cookie cutter, badge, lithophane, relief
-js/ai.js                AI platforms (Gemini, Claude, OpenAI-compatible, Zoo, Tripo3D, TRELLIS)
 js/repair.js            rebuilds leaky meshes as watertight solids
-js/tools.js             tool bar, mesh boolean tool, lay on face
+js/tools.js             tool bar, mesh boolean, lay on face, panels, section view, right-click menu
+js/storage.js           autosave and recovery versions (IndexedDB)
+js/printlink.js         send to OctoPrint / Moonraker
 js/qr.js                QR code encoder
 js/studio.js            Layer Studio (layers, QR, icons, keychains)
 js/mold.js              mold generator and cost calculator
 js/models.js            lithophane letter, carabiner, folding box, planter, vent grille, make many
 js/texture.js           Texture an STL (displacement textures)
 js/templates.js         ParamaCraft-style templates with sliders
-relay/worker.js         optional Cloudflare relay for Zoo and Tripo3D
 js/io.js                STL, OBJ, 3MF and ZIP read/write
 js/printers.js          printer and material presets
 vendor/                 Manifold (Apache-2.0)
@@ -215,6 +217,7 @@ See `docs/OPEN-SOURCE.md` for open-source projects worth building on next, with 
 
 - Geometry is mesh-based (Manifold), not a B-rep kernel, so STEP export and true edge fillets aren't available. Rounded boxes, chamfered cylinders and the generators cover common cases.
 - Estimates are approximate; your slicer gives the real numbers.
+- Send to printer was written against the OctoPrint and Moonraker documentation but hasn't been tested on a real printer yet.
 - PrintForge doesn't slice yet. Use your slicer, then check the result in G-code preview.
 - Text uses the fonts on the device you're using. Use **Freeze as mesh** to keep text identical across computers.
 
