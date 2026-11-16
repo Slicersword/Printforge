@@ -134,7 +134,7 @@ export class Viewport {
     this.app.emit?.('draw-extras', extras);
     const drawn = items.slice();
     if (this.mode === 'design' && this.preview?.items) for (const p of this.preview.items) drawn.push(p);
-    if (this._face && this.tool === 'flatten') drawn.push(this._face.item);
+    if (this._face && (this.tool === 'flatten' || this.facePick)) drawn.push(this._face.item);
     this.r.draw(drawn, extras);
     this._labels(box);
     if (ms?.a) { const b = ms.b || ms.hover; if (b) { const d = [b[0] - ms.a[0], b[1] - ms.a[1], b[2] - ms.a[2]]; this._label([(ms.a[0] + b[0]) / 2, (ms.a[1] + b[1]) / 2, (ms.a[2] + b[2]) / 2], `${fmt(Math.hypot(...d), 2)} mm  (Δx ${fmt(Math.abs(d[0]), 1)} · Δy ${fmt(Math.abs(d[1]), 1)} · Δz ${fmt(Math.abs(d[2]), 1)})`, 'measure'); } }
@@ -267,6 +267,9 @@ export class Viewport {
     if (this.measure && btn === 0) { this.state.mode = 'orbit'; this.state.measureClick = true; return; }
     if (btn === 1 || (btn === 2 && e.shiftKey)) { this.state.mode = 'pan'; return; }
     if (btn === 2) { this.state.mode = 'orbit'; return; }
+    if (this.mode === 'design' && this.facePick && btn === 0) {
+      const f = this._faceAt(x, y); if (f) { this.state.mode = 'face'; this.state.face = f; this.state.pick = true; return; }
+    }
     if (this.mode === 'design' && this.tool === 'flatten' && btn === 0) {
       const f = this._faceAt(x, y); if (f) { this.state.mode = 'face'; this.state.face = f; return; }
     }
@@ -294,7 +297,7 @@ export class Viewport {
     if (this.measure && this.measure.a && !this.measure.b) { this.measure.hover = this._measurePoint(e.offsetX, e.offsetY); this.redraw(); }
     if (!st) {
       // hover-highlight gizmo axes when idle
-      if (this.mode === 'design' && this.tool === 'flatten') { const now = performance.now(); if (now - (this._lastHover || 0) > 30) { this._lastHover = now; this._hoverFace(e.offsetX, e.offsetY); } return; }
+      if (this.mode === 'design' && (this.tool === 'flatten' || this.facePick)) { const now = performance.now(); if (now - (this._lastHover || 0) > 30) { this._lastHover = now; this._hoverFace(e.offsetX, e.offsetY); } return; }
       if (this.mode === 'design') { const gh = this._gizmoHit(e.offsetX, e.offsetY); const a = gh ? gh.axis : null; if (a !== this._hoverAxis) { this._hoverAxis = a; this.canvas.style.cursor = a != null ? 'pointer' : ''; this.redraw(); } }
       return;
     }
@@ -332,7 +335,7 @@ export class Viewport {
       if (p) { if (!ms.a || ms.b) { ms.a = p; ms.b = null; } else ms.b = p; }
       this.state = null; this.redraw(); return;
     }
-    if (st.mode === 'face') { this.state = null; this.app.layOnFace?.(st.face.obj, st.face.normal); this._face = null; this.redraw(); return; }
+    if (st.mode === 'face') { this.state = null; if (st.pick) this.facePick?.(st.face); else this.app.layOnFace?.(st.face.obj, st.face.normal); this._face = null; this.redraw(); return; }
     if (st.mode === 'gizmo') { this.dragging = false; this._dragAxis = null; this.labels.forEach((l) => l.remove()); this.labels = []; if (st.began) this.scene.commit(); this.state = null; this.redraw(); return; }
     if (st.mode === 'drag' || st.mode === 'lift') { this.dragging = false; this.scene.commit(); }
     else if (st.mode === 'maybeDrag' && !st.moved) {

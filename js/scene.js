@@ -189,7 +189,7 @@ export function strip(o) {
   if (c.children) c.children = c.children.map(strip);
   return JSON.parse(JSON.stringify(c));
 }
-export function cloneObj(o) { const c = strip(o); const re = (x) => { x.id = uid(); (x.children || []).forEach(re); }; re(c); return c; }
+export function cloneObj(o) { const c = strip(o); const re = (x) => { x.id = uid(); if (x.link) x.link = `${x.link.split("~")[0]}~${uid()}`; (x.children || []).forEach(re); }; re(c); return c; }
 
 function b64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
 function unb64(s) { const bin = atob(s); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }

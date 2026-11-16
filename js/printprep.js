@@ -98,7 +98,7 @@ export function install(app) {
     const used = shell + infill; const grams = used / 1000 * mat.density; const meters = used / (Math.PI * 0.875 * 0.875) / 1000;
     const layers = Math.ceil(res.maxZ / set.layer); const flow = 11 * mat.speed * (set.layer / 0.2);
     const seconds = used / Math.max(1, flow) + layers * 4 + (res.parts.length ? 180 : 0);
-    res.est = { grams, meters, seconds, cost: grams / 1000 * mat.price, layers };
+    res.est = { grams, meters, seconds, cost: grams / 1000 * mat.price, layers }; app.lastEstimate = res.est;
     st.results = res; return res;
   }
   const names = (list) => { const n = list.map((p) => `“${p.o.name}”`); return n.length > 2 ? `${n.slice(0, 2).join(', ')} and ${n.length - 2} more` : n.join(' and '); };
@@ -165,6 +165,7 @@ export function install(app) {
         h('div', { class: 'stat' }, h('b', {}, `${fmt(e.cost, 2)}`), h('span', {}, `filament cost at ${MATERIALS[set.material].price}/kg`)),
         h('div', { class: 'stat' }, h('b', {}, String(r.parts.length)), h('span', {}, r.parts.length === 1 ? 'part' : 'parts'))),
       h('p', { class: 'note' }, 'A rough estimate from volume, walls and infill. Your slicer gives the final numbers.'),
+      app.openCost ? h('button', { class: 'btn', style: { width: '100%' }, onclick: () => app.openCost(e) }, 'Cost calculator: price with power, wear and time…') : null,
       h('fieldset', {}, h('legend', {}, 'Print check'), h('ul', { class: 'check-list' }, ...r.checks.map((c) => h('li', { class: c.level }, h('span', { class: 'dot' }), h('span', {}, c.text, h('br'), fixBtn(c)))))),
       h('fieldset', {}, h('legend', {}, s.selection.size ? `Selected (${target.length})` : 'All parts'),
         h('div', { class: 'actions' },

@@ -152,7 +152,12 @@ class App {
   /** Change shape parameters, keeping the part's bottom where it was. */
   setParams(o, params, label = 'change shape') {
     const s = this.scene; const before = s.worldBox(o);
-    s.edit(label, () => { o.params = params; if (before) this._keepFloor(o, before); });
+    // Linked parts (Layer Studio layers, LED channel pieces…) share their settings; each keeps its own `local` keys.
+    const sibs = o.link ? s.objects.filter((x) => x !== o && x.link === o.link && x.type === 'shape') : [];
+    s.edit(label, () => {
+      const z0 = o.pos[2]; o.params = params; if (before) this._keepFloor(o, before); const dz = o.pos[2] - z0;
+      for (const x of sibs) { const keep = {}; for (const k of x.local || []) keep[k] = x.params[k]; x.params = { ...params, ...keep }; x.pos = [x.pos[0], x.pos[1], x.pos[2] + dz]; }
+    });
     if (o._error) this.toast(o._error, 4000);
   }
   rotateTo(o, axis, deg) { this.scene.edit('rotate', () => { const box = this.scene.worldBox(o); o.rot = o.rot.map((r, i) => (i === axis ? deg : r)); this._keepFloor(o, box); }); }
@@ -522,7 +527,7 @@ void transformDir; void K;
 export const app = new App();
 window.printforge = app;
 // Feature modules register themselves before start().
-const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js'), import('./tools.js')]);
+const mods = await Promise.allSettled([import('./generators.js'), import('./sketch.js'), import('./script.js'), import('./printprep.js'), import('./textshape.js'), import('./gcode.js'), import('./palette.js'), import('./makers.js'), import('./ai.js'), import('./tools.js'), import('./studio.js'), import('./mold.js'), import('./models.js'), import('./texture.js'), import('./templates.js')]);
 for (const m of mods) if (m.status === 'fulfilled' && m.value.install) app.plugins.push(m.value.install);
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !navigator.webdriver) navigator.serviceWorker.register('sw.js').catch(() => {});
 app.start().catch((e) => { document.getElementById('loading').innerHTML = `<p style="max-width:420px;text-align:center">PrintForge could not start: ${e.message}. Use a current Chrome, Edge, Firefox or Safari, and open the page through a web server (GitHub Pages works).</p>`; console.error(e); });

@@ -167,7 +167,7 @@ export function threadSection(K, rMajor, depth, segs = 72) {
   }
   return poly(K, pts);
 }
-function threadRod(K, d, pitch, len, inner = false, fit = 0) {
+export function threadRod(K, d, pitch, len, inner = false, fit = 0) {
   const depth = 0.6 * pitch; const rMajor = d / 2 + (inner ? fit : -fit);
   const turns = len / pitch; const rod = threadSection(K, rMajor, depth).extrude(len, Math.max(1, Math.ceil(turns * 16)), 360 * turns);
   return rod;
@@ -209,7 +209,8 @@ gen('vase', {
   label: 'Vase (spiral mode)', blurb: 'Solid vase body for your slicer\'s spiral/vase mode, with twist and ribs.',
   icon: gicon('<path d="M11 4h10M12 4c0 5-6 7-6 14a10 10 0 0 0 20 0c0-7-6-9-6-14"/>'),
   params: [n('h', 'Height', 120, 10, 400), n('rb', 'Base diameter', 60, 5, 300), n('rm', 'Belly diameter', 90, 5, 300), n('belly', 'Belly height', 35, 5, 95, 1, '%'), n('rt', 'Top diameter', 50, 5, 300),
-    int('sides', 'Sides (0 = round)', 0, 0, 24), int('ribs', 'Ribs', 12, 0, 64), n('ribDepth', 'Rib depth', 2, 0, 10, 0.1), n('twist', 'Twist', 90, -720, 720, 5, '°')],
+    int('sides', 'Sides (0 = round)', 0, 0, 24), int('ribs', 'Ribs', 12, 0, 64), n('ribDepth', 'Rib depth', 2, 0, 10, 0.1), n('twist', 'Twist', 90, -720, 720, 5, '°'),
+    int('waves', 'Waves up the side', 0, 0, 20), n('waveDepth', 'Wave depth', 3, 0, 20, 0.5)],
   build: (p, K) => {
     const segs = p.sides >= 3 ? p.sides : 120; const pts = [];
     const N = p.ribs > 0 ? Math.max(segs, p.ribs * 12) : segs;
@@ -221,7 +222,8 @@ gen('vase', {
     }
     const body = poly(K, pts).extrude(p.h, Math.max(24, Math.round(p.h / 2)), p.twist);
     const f = (z) => { const t = z / p.h, b = p.belly / 100; const lerp = (a, c, u) => a + (c - a) * (0.5 - 0.5 * Math.cos(Math.PI * u)); return (t < b ? lerp(p.rb, p.rm, t / b) : lerp(p.rm, p.rt, (t - b) / (1 - b))) / 2; };
-    return body.warp((v) => { const s = f(v[2]); v[0] *= s; v[1] *= s; });
+    const wave = (z) => (p.waves > 0 ? 1 + (p.waveDepth / Math.max(p.rm, 1)) * Math.sin((z / p.h) * p.waves * Math.PI * 2) : 1);
+    return body.warp((v) => { const s = f(v[2]) * wave(v[2]); v[0] *= s; v[1] *= s; });
   },
   note: 'Slice with spiral/vase mode on for a single-wall vase. Keep the twist gentle so overhangs stay under 45°.',
 });
@@ -275,12 +277,148 @@ gen('tag', {
   },
 });
 
+// ------------------------------------------------------------------ LED strip channel (after usestl's LED Channel)
+// Profile: U channel with support ledges and chamfered snap lips; the diffuser clicks in under the lips.
+function ledDims(p) {
+  const W = p.strip + 0.8, wall = p.wall, Wo = W + 2 * wall, lipH = 0.8, lip = 0.6, dT = p.dT;
+  const zl = p.h - lipH - dT - 2 * p.clr; // top of the ledges the diffuser rests on
+  return { W, wall, Wo, lipH, lip, dT, zl };
+}
+function ledProfile(p, K) {
+  const { W, Wo, lipH, lip, zl } = ledDims(p); const CS = K.CrossSection;
+  if (zl < p.floor + 1.5) throw new Error(`Channel height is too low for this diffuser. Make it at least ${(p.h - zl + p.floor + 1.5).toFixed(1)} mm.`);
+  let prof = CS.square([Wo, p.h]).translate([-Wo / 2, 0]).subtract(CS.square([W, p.h]).translate([-W / 2, p.floor]));
+  const tri = (pts) => CS.ofPolygons([pts]);
+  for (const sgn of [-1, 1]) {
+    const x = sgn * W / 2, d = -sgn * lip; // d points inward
+    const ledge = [[x, zl - 0.9], [x + d, zl], [x, zl]]; const lipP = [[x, p.h], [x + d, p.h - 0.35], [x + d, p.h - lipH], [x, p.h - lipH]];
+    const fix = (q) => (sgn > 0 ? q : q.slice().reverse());
+    prof = prof.add(tri(fix(ledge))).add(tri(fix(lipP)));
+  }
+  return prof;
+}
+function along(cs, L, K) { return cs.extrude(L).rotate([90, 0, 0]).rotate([0, 0, 90]).translate([-L / 2, 0, 0]); }
+function mitreCut(m, p, K, Wo) {
+  const big = 4 * (Wo + p.h + 50);
+  const cutter = (sign) => K.Manifold.cube([big, big, big], true).translate([sign * big / 2, 0, 0]).rotate([0, 0, -sign * 45]);
+  if (p.startEnd === 'miter') m = m.subtract(cutter(-1).translate([-p.len / 2, -Wo / 2, 0]));
+  if (p.finishEnd === 'miter') m = m.subtract(cutter(1).translate([p.len / 2, -Wo / 2, 0]));
+  return m;
+}
+function ledCap(p, K, kind) {
+  const { W, Wo } = ledDims(p); const t = 2, plug = 6, cl = Math.max(0.1, p.clr);
+  const plate = K.Manifold.cube([t, Wo, p.h]).translate([-t, -Wo / 2, 0]);
+  const plugM = K.Manifold.cube([plug, W - 2 * cl, Math.max(1, ledDims(p).zl - p.floor - cl)]).translate([0, -(W - 2 * cl) / 2, p.floor + cl]);
+  let cap = plate.add(plugM);
+  if (kind === 'cable') cap = cap.subtract(K.Manifold.cylinder(t + plug + 2, 2.2, 2.2, 32).rotate([0, 90, 0]).translate([-t - 1, 0, p.floor + 2.2]).add(K.Manifold.cube([t + plug + 2, 4.4, 2.2]).translate([-t - 1, -2.2, p.floor])));
+  return cap; // plate at x ∈ [-t, 0], plug pointing +x (into the channel)
+}
+gen('ledchannel', {
+  label: 'LED strip channel', blurb: 'Channel with a snap-in diffuser sized to your strip. End caps, 45° mitres for corners and joiners.',
+  icon: gicon('<path d="M3 13h26v8H3z"/><path d="M3 13l2-2h22l2 2"/><path d="M8 17h2M14 17h2M20 17h2" stroke-width="2"/>'),
+  keepOrigin: true,
+  multi: [['channel', 'Channel', '#16D8AA'], ['diffuser', 'Diffuser', '#F3F3F0'], ['caps', 'End caps', '#16D8AA'], ['joiner', 'Joiner', '#16D8AA']],
+  params: [n('len', 'Length of each piece', 200, 20, 1000), n('strip', 'LED strip width', 10, 3, 40, 0.5), n('h', 'Channel height', 9.25, 5, 40, 0.25), n('clr', 'Diffuser clearance', 0.15, 0, 0.6, 0.05),
+    n('wall', 'Wall', 1.2, 0.8, 3, 0.1), n('floor', 'Floor', 1.2, 0.8, 4, 0.1), n('dT', 'Diffuser thickness', 1.2, 0.6, 3, 0.1),
+    sel('startEnd', 'Start end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('startCap', 'Start cap', 'cable', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
+    sel('finishEnd', 'Finish end', 'straight', [['straight', 'Straight'], ['miter', '45° mitre (corner)']]), sel('finishCap', 'Finish cap', 'smooth', [['none', 'None'], ['smooth', 'Smooth'], ['cable', 'With cable exit']]),
+    int('holes', 'M3 mounting holes', 0, 0, 20), int('joiners', 'Joiners', 1, 0, 10), sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], ['separate', 'Separate parts (to print)']]),
+    sel('part', 'This object is the', 'channel', [['channel', 'Channel'], ['diffuser', 'Diffuser'], ['caps', 'End caps'], ['joiner', 'Joiner']])],
+  build: (p, K) => {
+    const { W, Wo, zl, dT } = ledDims(p); const sep = p.layout === 'separate'; const M = K.Manifold;
+    if (p.part === 'diffuser') {
+      let d = along(K.CrossSection.square([W - 2 * p.clr, dT]).translate([-(W - 2 * p.clr) / 2, 0]), p.len, K);
+      d = mitreCut(d, p, K, Wo);
+      return sep ? d.translate([0, Wo + 8, 0]) : d.translate([0, 0, zl + p.clr]);
+    }
+    if (p.part === 'caps') {
+      const caps = [];
+      if (p.startEnd === 'straight' && p.startCap !== 'none') caps.push({ c: ledCap(p, K, p.startCap), at: -p.len / 2, flip: false });
+      if (p.finishEnd === 'straight' && p.finishCap !== 'none') caps.push({ c: ledCap(p, K, p.finishCap), at: p.len / 2, flip: true });
+      if (!caps.length) throw new Error('No end caps: both ends are mitred or set to None.');
+      const out = caps.map(({ c, at, flip }, i) => {
+        if (sep) return c.rotate([0, -90, 0]).translate([0, 0, 2]).translate([i * (p.h + 8) - p.len / 2, -(Wo + 10 + Wo / 2), 0]); // plate down on the bed
+        return (flip ? c.rotate([0, 0, 180]) : c).translate([at, 0, 0]);
+      });
+      return M.union(out);
+    }
+    if (p.part === 'joiner') {
+      if (!p.joiners) throw new Error('Set Joiners to 1 or more to make joiners.');
+      const g = 0.2, jw = 1.2, jl = 30, iW = Wo + 2 * g, oW = iW + 2 * jw, jh = Math.min(p.h - 1, zl);
+      const one = M.cube([jl, oW, jh + jw]).translate([-jl / 2, -oW / 2, -jw]).subtract(M.cube([jl + 2, iW, jh + 2]).translate([-jl / 2 - 1, -iW / 2, 0]));
+      const list = Array.from({ length: p.joiners }, (_, i) => (sep ? one.translate([i * (jl + 6) - p.len / 2 + jl / 2, -(2 * Wo + 30), jw]) : one.translate([p.len / 2 + i * 0.001, 0, 0])));
+      return M.union(list);
+    }
+    let ch = along(ledProfile(p, K), p.len, K);
+    ch = mitreCut(ch, p, K, Wo);
+    if (p.holes > 0) {
+      const usable = p.len - 30; const xs = p.holes === 1 ? [0] : Array.from({ length: p.holes }, (_, i) => -usable / 2 + usable * i / (p.holes - 1));
+      for (const x of xs) ch = ch.subtract(M.cylinder(p.floor + 2, 1.7, 1.7, 24).translate([x, 0, -1])).subtract(M.cylinder(1.8, 1.7, 3.3, 24).translate([x, 0, p.floor - 1.8 + 0.01]));
+    }
+    return ch;
+  },
+  note: 'Each part is its own object with its own colour, and they share these settings. Print the channel on its back, the diffuser flat in a translucent filament, and the caps plate-down.',
+});
+
+// ------------------------------------------------------------------ Gridfinity baseplate sized to a drawer
+gen('gfbase', {
+  label: 'Gridfinity baseplate for a drawer', blurb: 'Enter your drawer size: as many 42 mm cells as fit, padding to fill the rest, split to fit your bed.',
+  icon: gicon('<rect x="4" y="4" width="24" height="24" rx="2"/><path d="M12 4v24M20 4v24M4 12h24M4 20h24"/>'),
+  params: [n('dw', 'Drawer width', 300, 42, 2000), n('dd', 'Drawer depth', 200, 42, 2000), n('fit', 'Clearance (total)', 1, 0, 6, 0.5), bool('fill', 'Fill the drawer (padding)', true),
+    sel('align', 'Grid position', 'center', [['center', 'Centred'], ['corner', 'Front-left corner']]), bool('magnets', 'Magnet holes (6×2 mm)', false), n('bed', 'Largest piece', 220, 84, 600, 1), n('gap', 'Gap between pieces', 4, 1, 30, 1)],
+  build: (p, K) => {
+    const M = K.Manifold; const P = 42; const W = p.dw - p.fit, D = p.dd - p.fit;
+    const nx = Math.floor(W / P), ny = Math.floor(D / P); if (!nx || !ny) throw new Error('The drawer is smaller than one 42 mm cell.');
+    const gw = nx * P, gd = ny * P; const fw = p.fill ? W : gw, fd = p.fill ? D : gd;
+    const offx = p.align === 'center' ? (fw - gw) / 2 : 0, offy = p.align === 'center' ? (fd - gd) / 2 : 0;
+    const H = 4.65, floor = p.magnets ? 2.4 : 0;
+    const slab = (sz, r, z) => roundedRect(K, sz, sz, r, 8).extrude(0.01).translate([0, 0, z]);
+    const pocket = M.union([M.hull([slab(P - 5.7, 0.8, -0.01), slab(P - 4.3, 1.6, 0.7)]), M.hull([slab(P - 4.3, 1.6, 0.7), slab(P - 4.3, 1.6, 2.5)]), M.hull([slab(P - 4.3, 1.6, 2.5), slab(P, 4, H + 0.01)])]).translate([0, 0, floor]);
+    const through = floor ? null : M.cube([P - 5.7, P - 5.7, floor + 1], true);
+    const magnet = p.magnets ? M.union([-1, 1].flatMap((sx) => [-1, 1].map((sy) => M.cylinder(2.41, 3.25, 3.25, 28).translate([sx * 13, sy * 13, floor - 2.4])))) : null;
+    // split along cell lines so every piece fits the bed
+    const per = Math.max(1, Math.floor((p.bed - Math.max(offx, offy)) / P));
+    const cuts = (n, off, full) => { const xs = [0]; for (let c = per; c < n; c += per) xs.push(off + c * P); xs.push(full); return xs; };
+    const cx = cuts(nx, offx, fw), cy = cuts(ny, offy, fd); const pieces = [];
+    for (let i = 0; i + 1 < cx.length; i++) for (let j = 0; j + 1 < cy.length; j++) {
+      const x0 = cx[i], x1 = cx[i + 1], y0 = cy[j], y1 = cy[j + 1];
+      let piece = M.cube([x1 - x0, y1 - y0, H + floor]).translate([x0, y0, 0]);
+      const holes = [];
+      for (let a = 0; a < nx; a++) for (let b = 0; b < ny; b++) {
+        const ccx = offx + (a + 0.5) * P, ccy = offy + (b + 0.5) * P; if (ccx < x0 || ccx > x1 || ccy < y0 || ccy > y1) continue;
+        holes.push(pocket.translate([ccx, ccy, 0])); if (magnet) holes.push(magnet.translate([ccx, ccy, 0]));
+      }
+      if (holes.length) piece = piece.subtract(M.union(holes));
+      pieces.push(piece.translate([i * p.gap, j * p.gap, 0]));
+    }
+    void through;
+    return M.union(pieces).translate([-fw / 2, -fd / 2, 0]);
+  },
+  note: 'Cells snap together across the joins. Measure the inside of the drawer at the bottom.',
+});
+
 // ------------------------------------------------------------------ UI tab
 export function install(app) {
-  for (const g of GENERATORS) app.addAction({ label: g.label, group: 'Generator', iconHtml: g.icon, run: () => { app.setMode('design'); app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS }); } });
+  const addGen = (g) => {
+    app.setMode('design');
+    if (!g.multi) return app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS });
+    // several linked objects, one per part, so each can have its own colour in a 3MF
+    const p = defaultsOf(g); const link = `L${Date.now().toString(36)}`; const s = app.scene; const made = [];
+    const first = app.addShape(g.kind, { ...p, part: g.multi[0][0] }, { name: `${g.label} · ${g.multi[0][1]}`, color: g.multi[0][2] });
+    first.link = link; first.local = ['part']; made.push(first);
+    s.edit(`add ${g.label.toLowerCase()}`, () => {
+      for (const [part, name, color] of g.multi.slice(1)) {
+        const o = { ...JSON.parse(JSON.stringify(first)), id: `${first.id}${part}`, name: `${g.label} · ${name}`, color, params: { ...first.params, part } };
+        s.objects.push(o); made.push(o);
+      }
+      s.selection = new Set(made.map((o) => o.id));
+    });
+    s.emit('select'); app.toast(`${g.label}: ${made.length} linked parts. Change a setting on any of them and the others follow.`);
+  };
+  for (const g of GENERATORS) app.addAction({ label: g.label, group: 'Generator', iconHtml: g.icon, run: () => addGen(g) });
   app.library.addTab('generators', 'Parts', (el) => {
     el.append(h('p', { class: 'note', style: { marginBottom: '8px' } }, 'Complete parts from a few measurements. Every number stays editable in the panel on the right.'));
-    el.append(h('div', { class: 'gen-list' }, ...GENERATORS.map((g) => h('button', { class: 'gen-btn', onclick: () => app.addShape(g.kind, defaultsOf(g), { name: g.label, list: GENERATORS }) },
+    el.append(h('div', { class: 'gen-list' }, ...GENERATORS.map((g) => h('button', { class: 'gen-btn', onclick: () => addGen(g) },
       h('span', { html: g.icon }), h('b', {}, g.label), h('span', {}, g.blurb)))));
   });
 }

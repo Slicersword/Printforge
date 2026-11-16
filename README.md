@@ -93,6 +93,39 @@ Click **AI** and pick a platform. Each one keeps its own key in your browser, so
 ### Calibration prints (Code tab)
 Tolerance test, overhang test, bridge test and retraction test, each with editable sizes.
 
+### Layer Studio, QR codes, molds and more (ideas from usestl.com)
+
+- **Layer Studio** (Studio tab): build signs, tags and keychains layer by layer. Each layer has its own thickness and colour and holds text, icons, your own SVG or image, QR codes, rectangles, circles and polygons, an outline that follows everything above it, keyring loops that stick to the edge, and holes through every layer. Where layers overlap they interlock: the upper layer sinks into a pocket in the one below, so colours sit flush. Each layer is its own object, so a 3MF keeps the colours. Presets: QR code sign, Wi-Fi QR sign, QR keychain, name keychain, letter keychain, icon tag and door sign. Double-click a layer on the plate to edit the design again.
+- **QR codes**: links, text, Wi-Fi login, contact cards, email, phone and text messages, with error correction L/M/Q/H. The encoder is built in (no internet needed) and shows the module size so you know it will print.
+- **LED strip channel**: sized to your strip, with a snap-in diffuser, end caps (plain or with a cable exit), 45° mitres for corners, M3 mounting holes and joiners for runs longer than your bed. The channel, diffuser, caps and joiner are separate linked objects: change a setting on one and the others follow, and each keeps its own colour.
+- **Mold generator** (select a part, then Studio tab → Tools or Ctrl K): a two-part rigid mold split at the widest point with alignment pins, pour spout, air vents and clamp ears; a silicone mold box (optionally split in two); or a multi-cavity tray for ice, chocolate or soap.
+- **Gridfinity baseplate for a drawer**: type the drawer size; you get as many 42 mm cells as fit, padding to fill the drawer, optional magnet holes, split into pieces that fit your bed.
+- **Cost calculator**: filament, electricity, printer wear and upkeep, your time, extras, failed prints and profit margin, with the weight and time filled in from Prepare to print.
+- **Vase waves**: the vase generator can now ripple up the side as well as twist.
+
+### Models tab (more ideas from usestl.com)
+
+- **Lithophane letter**: a big hollow initial with a removable lithophane panel in the front (choose any photo), room for an LED strip, a cable slot in the base and a script name across the front. Body, panel and name are linked parts in three colours.
+- **Screw-lock carabiner**: body with a threaded nose, a gate on a pin, a knurled sleeve that screws over the nose, and a name on the side. Light duty, never for climbing.
+- **Folding box**: a mailer box printed flat in one piece with thin creases, corner tabs, dust flaps and a tuck-in lid. Optional picture on the lid, engraved or in a second colour.
+- **Geometric planter**: diamond facets, a polygonal rim, a drainage hole and an optional saucer.
+- **Vent grille**: rectangular, square, round or hexagonal, 45° louvers that print without supports, countersunk screw holes.
+- **Texture an STL** (Ctrl K or Studio tab → Tools): 26 relief patterns (honeycomb, knurl, diamond plate, bricks, stone, leather, wood, weave, carbon twill, scales, hearts, stars…) or your own image tile. Pattern size, depth, rotation, engrave, symmetric relief and overhang protection; box, cylinder or top-down projection; the base stays flat and you can click faces to keep them smooth. Live preview, then Apply.
+- **Make many at once**: select a model with a name and type a list of names; you get one complete copy (all linked parts) per name.
+- Script and display fonts for names: Pacifico, Great Vibes, Lobster, Bebas Neue, Anton and Righteous (Google Fonts, SIL Open Font Licence).
+
+### Templates tab (in the spirit of ParamaCraft Lite)
+
+Pick an everyday object and shape it with sliders: **divided tray**, **box with a press-fit or sliding lid** (two parts), **spacer / washer** (round, hex or square, any quantity), **phone or tablet stand**, **slotted drawer dividers**, **test tube rack**, **snap-in cable guide** and **hose / pipe adapter** with barbs. Every number setting in the right panel now has a slider as well as a typed value.
+
+### Lithophane folding fan
+
+Fan blades that show a picture when light shines through: one picture across the whole fan, or one picture per group of blades, plus optional text in any font. A built-in sunset picture is used until you choose your own. Blades print flat; join them through the pivot holes with an M3 screw or a rivet.
+
+### Texture tool, more options
+
+Unfolded projection (the pattern runs on around the sides), 33 patterns, smooth-face masks (paint a face, bucket by angle, erase), orientation (place on face, rotate X/Y/Z), choose an STL / 3MF from inside the tool, a 50 mm demo cube when nothing is selected, shell and open-edge counts, and settings you can save and open again.
+
 ### G-code preview
 - Open a `.gcode` file from Bambu Studio, OrcaSlicer, PrusaSlicer, Cura, Kiri:Moto or any other slicer, or a Bambu `.gcode.3mf`. Drop it on the view or use **Import**.
 - Toolpaths coloured by feature (outer and inner walls, infill, top and bottom, bridges, support, skirt and brim) or by speed. Turn any feature off.
@@ -149,6 +182,12 @@ js/makers.js            stencil, cookie cutter, badge, lithophane, relief
 js/ai.js                AI platforms (Gemini, Claude, OpenAI-compatible, Zoo, Tripo3D, TRELLIS)
 js/repair.js            rebuilds leaky meshes as watertight solids
 js/tools.js             tool bar, mesh boolean tool, lay on face
+js/qr.js                QR code encoder
+js/studio.js            Layer Studio (layers, QR, icons, keychains)
+js/mold.js              mold generator and cost calculator
+js/models.js            lithophane letter, carabiner, folding box, planter, vent grille, make many
+js/texture.js           Texture an STL (displacement textures)
+js/templates.js         ParamaCraft-style templates with sliders
 relay/worker.js         optional Cloudflare relay for Zoo and Tripo3D
 js/io.js                STL, OBJ, 3MF and ZIP read/write
 js/printers.js          printer and material presets

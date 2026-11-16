@@ -102,7 +102,7 @@ registerKind('badge', {
 // ---------------------------------------------------------------- lithophane / relief from a greyscale grid
 export function encodeGray(u8) { let s = ''; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); }
 const grayCache = new Map();
-function decodeGray(b64) { let u = grayCache.get(b64); if (!u) { const s = atob(b64); u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); grayCache.set(b64, u); if (grayCache.size > 8) grayCache.delete(grayCache.keys().next().value); } return u; }
+export function decodeGray(b64) { let u = grayCache.get(b64); if (!u) { const s = atob(b64); u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); grayCache.set(b64, u); if (grayCache.size > 8) grayCache.delete(grayCache.keys().next().value); } return u; }
 
 /** Closed height-field solid: vertex heights on an nx×ny grid, bottom at z = 0. */
 export function heightField(Kk, H, nx, ny, sx, sy) {
@@ -173,7 +173,7 @@ export const MAKERS = [
 
 function loopsBounds(loops) { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const l of loops) for (const [x, y] of l) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } return { x0, y0, x1, y1 }; }
 
-async function grayFromFile(file, cols) {
+export async function grayFromFile(file, cols) {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('This image could not be read. Use PNG, JPG or WebP.')); i.src = url; });

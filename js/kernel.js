@@ -47,6 +47,9 @@ function cacheSet(key, e) {
   }
 }
 
+/** Forget cached geometry whose key matches (e.g. text that was drawn before its web font loaded). */
+export function dropCache(test) { for (const [k, e] of [...cache]) if (test(k)) { cache.delete(k); try { e.man.delete(); } catch { /* ignore */ } } }
+
 const keyMemo = new WeakMap();
 export function geomKey(obj, doc) {
   let k;
@@ -90,7 +93,8 @@ export function localGeometry(obj) {
     man = def.build(obj.params, K);
   }
   if (!man || man.isEmpty()) throw new Error('This shape came out empty. Check its sizes.');
-  if (obj.type !== 'group') man = centred(man);
+  // Linked multi-part kinds (Layer Studio layers, LED channel parts) keep a shared origin so the parts line up.
+  if (obj.type !== 'group' && !(obj.type === 'shape' && builders.get(obj.kind)?.keepOrigin)) man = centred(man);
   const entry = { man, render: null, key };
   cacheSet(key, entry);
   return entry;

@@ -73,7 +73,16 @@ export function paramForm(schema, params, onChange) {
     if (f.when && !f.when(params)) continue;
     let ctl;
     const set = (v) => onChange({ ...params, [f.key]: v });
-    if (f.type === 'num' || f.type === 'int') ctl = numField(params[f.key] ?? f.def, set, { step: f.step, min: f.min, max: f.max, int: f.type === 'int', label: f.label, digits: f.digits ?? 3 });
+    if (f.type === 'num' || f.type === 'int') {
+      const nf = numField(params[f.key] ?? f.def, set, { step: f.step, min: f.min, max: f.max, int: f.type === 'int', label: f.label, digits: f.digits ?? 3 });
+      // a slider under the number, like a customizer; the value is applied when you let go
+      if (isFinite(f.min) && isFinite(f.max) && f.max > f.min) {
+        const rng = h('input', { type: 'range', class: 'pslide', min: String(f.min), max: String(f.max), step: String(f.type === 'int' ? 1 : (f.step || 0.1)), value: String(params[f.key] ?? f.def), 'aria-label': `${f.label} slider`,
+          oninput: (e) => { nf.value = fmt(+e.target.value, f.digits ?? 3); }, onchange: (e) => set(f.type === 'int' ? Math.round(+e.target.value) : +e.target.value), onkeydown: (e) => e.stopPropagation() });
+        fs.append(row(f.label, nf, f.unit && f.unit !== 'mm' ? f.unit : ''), rng); continue;
+      }
+      ctl = nf;
+    }
     else if (f.type === 'select') ctl = h('select', { onchange: (e) => set(e.target.value), 'aria-label': f.label }, ...f.options.map((o) => { const [v, l] = Array.isArray(o) ? o : [o, o]; return h('option', { value: v, selected: String(params[f.key]) === String(v) }, l); }));
     else if (f.type === 'bool') ctl = h('input', { type: 'checkbox', checked: !!params[f.key], onchange: (e) => set(e.target.checked), 'aria-label': f.label, style: { justifySelf: 'end' } });
     else if (f.type === 'text') ctl = h('input', { type: 'text', value: params[f.key] ?? '', onchange: (e) => set(e.target.value), onkeydown: (e) => e.stopPropagation(), 'aria-label': f.label });
@@ -180,6 +189,7 @@ export function renderInspector(app) {
     }
     if (def?.editor) parts.push(h('button', { class: 'btn primary', onclick: () => app.openEditor(o) }, def.editorLabel || 'Edit'));
     if (o.kind === 'script' && app.openAI) parts.push(h('button', { class: 'btn', onclick: () => app.openAI() }, 'Change with AI…'));
+    if (app.canMakeMany?.(o)) parts.push(h('button', { class: 'btn', title: 'One copy for each name in a list', onclick: () => app.makeMany(o) }, 'Make many at once…'));
   }
   if (o.type === 'group') parts.push(h('p', { class: 'note' }, `Group of ${o.children.length}: ${o.children.filter((c) => c.hole).length} hole(s) cut from ${o.children.filter((c) => !c.hole).length} solid(s).`));
   if (o.type === 'mesh') parts.push(h('p', { class: 'note' }, 'Imported mesh. Move, scale, rotate, group and cut it like any other shape.'));

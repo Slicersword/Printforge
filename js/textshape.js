@@ -68,7 +68,7 @@ function canvasToLoops(ctx, w, hh, ppm, mode = 'alpha', threshold = 0.5, invert 
 }
 
 // ------------------------------------------------------------------ text
-const FONTS = [['Barlow', 'Barlow (app font)'], ['Arial, Helvetica, sans-serif', 'Sans-serif'], ['Arial Black, Arial, sans-serif', 'Heavy sans'], ['Georgia, Times New Roman, serif', 'Serif'], ['Courier New, monospace', 'Monospace'], ['Impact, sans-serif', 'Condensed'], ['Comic Sans MS, cursive', 'Rounded casual'], ['Brush Script MT, cursive', 'Script']];
+export const FONTS = [['Barlow', 'Barlow (app font)'], ['Pacifico, cursive', 'Pacifico (script)'], ['Great Vibes, cursive', 'Great Vibes (script)'], ['Lobster, cursive', 'Lobster'], ['Bebas Neue, sans-serif', 'Bebas Neue'], ['Anton, sans-serif', 'Anton'], ['Righteous, sans-serif', 'Righteous'], ['Arial, Helvetica, sans-serif', 'Sans-serif'], ['Arial Black, Arial, sans-serif', 'Heavy sans'], ['Georgia, Times New Roman, serif', 'Serif'], ['Courier New, monospace', 'Monospace'], ['Impact, sans-serif', 'Condensed'], ['Comic Sans MS, cursive', 'Rounded casual'], ['Brush Script MT, cursive', 'Script']];
 let textCanvas = null;
 export function textLoops(p) {
   if (typeof document === 'undefined') throw new Error('Text needs a browser.');
