@@ -235,6 +235,7 @@ export class Viewport {
     if (this.mode === 'design' && this.preview?.items) for (const p of this.preview.items) drawn.push(p);
     if (this._face && (this.tool === 'flatten' || this.facePick)) drawn.push(this._face.item);
     this.r.draw(drawn, extras);
+    this.labels.forEach((l) => l.remove()); this.labels = []; // one-off labels (measure) are redrawn each frame
     this._labels(box);
     if (ms?.a) { const b = ms.b || ms.hover; if (b) { const d = [b[0] - ms.a[0], b[1] - ms.a[1], b[2] - ms.a[2]]; this._label([(ms.a[0] + b[0]) / 2, (ms.a[1] + b[1]) / 2, (ms.a[2] + b[2]) / 2], `${fmt(Math.hypot(...d), 2)} mm  (Δx ${fmt(Math.abs(d[0]), 1)} · Δy ${fmt(Math.abs(d[1]), 1)} · Δz ${fmt(Math.abs(d[2]), 1)})`, 'measure'); } }
     this.app.emit?.('drawn');
@@ -295,24 +296,28 @@ export class Viewport {
   }
 
   _labels(box) {
-    const host = this.canvas.parentElement;
-    this.labels.forEach((l) => l.remove()); this.labels = [];
-    if (!box || this.dragging) { if (!box) return; }
+    // the size labels are four reused elements, moved with a transform: no new elements and no page layout per frame
+    const host = this.canvas.parentElement; const pool = this._dimPool || (this._dimPool = []); let used = 0;
     const placed = [];
     const add = (p, text) => {
       const q = this.r.project(p); if (!q) return; let [x, y] = q;
       // nudge a label down until it no longer sits on top of one already placed
       for (let n = 0; n < 6 && placed.some(([a, b]) => Math.abs(a - x) < 44 && Math.abs(b - y) < 22); n++) y += 24;
       placed.push([x, y]);
-      const d = document.createElement('div'); d.className = 'dimlabel'; d.textContent = text; d.style.left = x + 'px'; d.style.top = y + 'px'; host.appendChild(d); this.labels.push(d);
+      let d = pool[used]; if (!d) { d = document.createElement('div'); d.className = 'dimlabel'; d.style.left = '0'; d.style.top = '0'; host.appendChild(d); pool.push(d); }
+      if (d.textContent !== text) d.textContent = text; d.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`; d.hidden = false; used++;
     };
-    const [x0, y0, z0] = box.min, [x1, y1, z1] = box.max;
-    const qa = this.r.project(box.min), qb = this.r.project(box.max);
-    if (qa && qb && Math.hypot(qa[0] - qb[0], qa[1] - qb[1]) < 70) return; // too small on screen for readable labels
-    add([(x0 + x1) / 2, y0 - 4, z0], fmt(x1 - x0, 2));
-    add([x1 + 4, (y0 + y1) / 2, z0], fmt(y1 - y0, 2));
-    add([x1 + 3, y0 - 3, (z0 + z1) / 2], fmt(z1 - z0, 2));
-    if (z0 > 0.01 || z0 < -0.01) add([x0 - 3, y0 - 3, z0 / 2], '↑ ' + fmt(z0, 2));
+    if (box) {
+      const [x0, y0, z0] = box.min, [x1, y1, z1] = box.max;
+      const qa = this.r.project(box.min), qb = this.r.project(box.max);
+      if (!(qa && qb && Math.hypot(qa[0] - qb[0], qa[1] - qb[1]) < 70)) { // too small on screen for readable labels
+        add([(x0 + x1) / 2, y0 - 4, z0], fmt(x1 - x0, 2));
+        add([x1 + 4, (y0 + y1) / 2, z0], fmt(y1 - y0, 2));
+        add([x1 + 3, y0 - 3, (z0 + z1) / 2], fmt(z1 - z0, 2));
+        if (z0 > 0.01 || z0 < -0.01) add([x0 - 3, y0 - 3, z0 / 2], '↑ ' + fmt(z0, 2));
+      }
+    }
+    for (let i = used; i < pool.length; i++) if (!pool[i].hidden) pool[i].hidden = true;
   }
 
   _label(p, text, cls = '') { const q = this.r.project(p); if (!q) return; const d = document.createElement('div'); d.className = 'dimlabel ' + cls; d.textContent = text; d.style.left = q[0] + 'px'; d.style.top = q[1] + 'px'; this.canvas.parentElement.appendChild(d); this.labels.push(d); }

@@ -20,7 +20,45 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&family=Pacifico&family=Bebas+Neue&family=Lobster&family=Great+Vibes&family=Anton&family=Righteous&display=swap" rel="stylesheet">
+<!-- interface fonts load without holding up the first paint; the Text tool's decorative fonts load only when used (models.js) -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap"></noscript>
+<!-- fetch every module and the geometry engine in parallel, instead of one import at a time -->
+<link rel="modulepreload" href="vendor/manifold.js">
+<link rel="modulepreload" href="js/fillet.js">
+<link rel="modulepreload" href="js/gcode.js">
+<link rel="modulepreload" href="js/generators.js">
+<link rel="modulepreload" href="js/geo.js">
+<link rel="modulepreload" href="js/geoops.js">
+<link rel="modulepreload" href="js/io.js">
+<link rel="modulepreload" href="js/kernel.js">
+<link rel="modulepreload" href="js/main.js">
+<link rel="modulepreload" href="js/makers.js">
+<link rel="modulepreload" href="js/math.js">
+<link rel="modulepreload" href="js/models.js">
+<link rel="modulepreload" href="js/mold.js">
+<link rel="modulepreload" href="js/motion.js">
+<link rel="modulepreload" href="js/palette.js">
+<link rel="modulepreload" href="js/printers.js">
+<link rel="modulepreload" href="js/printlink.js">
+<link rel="modulepreload" href="js/printprep.js">
+<link rel="modulepreload" href="js/qr.js">
+<link rel="modulepreload" href="js/renderer.js">
+<link rel="modulepreload" href="js/repair.js">
+<link rel="modulepreload" href="js/scene.js">
+<link rel="modulepreload" href="js/script.js">
+<link rel="modulepreload" href="js/shapes.js">
+<link rel="modulepreload" href="js/share.js">
+<link rel="modulepreload" href="js/sketch.js">
+<link rel="modulepreload" href="js/storage.js">
+<link rel="modulepreload" href="js/studio.js">
+<link rel="modulepreload" href="js/templates.js">
+<link rel="modulepreload" href="js/textshape.js">
+<link rel="modulepreload" href="js/texture.js">
+<link rel="modulepreload" href="js/tools.js">
+<link rel="modulepreload" href="js/ui.js">
+<link rel="modulepreload" href="js/viewport.js">
+<link rel="preload" href="vendor/manifold.wasm" as="fetch" type="application/wasm" crossorigin>
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>

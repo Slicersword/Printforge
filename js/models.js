@@ -18,6 +18,9 @@ const LAYOUT = sel('layout', 'Show', 'assembled', [['assembled', 'Assembled'], [
 const SCRIPT_FONTS = [['Pacifico, cursive', 'Pacifico (script)'], ['Great Vibes, cursive', 'Great Vibes (script)'], ['Lobster, cursive', 'Lobster'], ['Brush Script MT, cursive', 'Brush script']];
 const BLOCK_FONTS = [['Bebas Neue, sans-serif', 'Bebas Neue'], ['Anton, sans-serif', 'Anton'], ['Arial Black, Arial, sans-serif', 'Arial Black'], ['Righteous, sans-serif', 'Righteous'], ['Impact, sans-serif', 'Impact']];
 const isScript = (f) => /Pacifico|Vibes|Lobster|Brush/.test(f);
+const DECOR_FAMS = ['Pacifico', 'Great Vibes', 'Lobster', 'Bebas Neue', 'Anton', 'Righteous'];
+const DECOR_RE = /Pacifico|Great Vibes|Lobster|Bebas Neue|Anton|Righteous/;
+const DECOR_FONTS_CSS = 'https://fonts.googleapis.com/css2?family=Pacifico&family=Bebas+Neue&family=Lobster&family=Great+Vibes&family=Anton&family=Righteous&display=swap';
 
 /** Text as a 2D region, scaled so it is exactly `height` mm tall (or `width` wide if given), centred. */
 function textRegion(str, font, { height, width, maxWidth } = {}) {
@@ -359,7 +362,7 @@ export function pickFan(app, o) {
         const g = fanGeom({ ...o.params }); const [x0, y0, x1, y1] = g.box; const W = 600, Hh = Math.round(W * (y1 - y0) / (x1 - x0));
         const c = document.createElement('canvas'); c.width = W; c.height = Hh; const ctx = c.getContext('2d', { willReadFrequently: true });
         ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, Hh); ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const px = st.size / (x1 - x0) * W; try { await document.fonts.load(`${px}px ${st.font}`); } catch { /* fallback font */ } ctx.font = `${px}px ${st.font}`;
+        const px = st.size / (x1 - x0) * W; if (DECOR_RE.test(st.font)) await app.needFonts?.(); try { await document.fonts.load(`${px}px ${st.font}`); } catch { /* fallback font */ } ctx.font = `${px}px ${st.font}`;
         ctx.fillText(st.text, W / 2, Hh * (1 - st.pos / 100));
         const d = ctx.getImageData(0, 0, W, Hh).data; const u8 = new Uint8Array(W * Hh); for (let i = 0; i < u8.length; i++) u8[i] = d[i * 4];
         Object.assign(patch, { textGray: encodeGray(u8), tgw: W, tgh: Hh });
@@ -430,7 +433,17 @@ export function install(app) {
     el.append(h('p', { class: 'note', style: { marginBottom: '8px' } }, 'Complete models: change the numbers and colours in the panel on the right. Models with several parts keep them linked.'));
     el.append(h('div', { class: 'gen-list' }, ...MODELS.map((m) => h('button', { class: 'gen-btn', onclick: () => addModel(app, m) }, h('span', { html: m.icon }), h('b', {}, m.label), h('span', {}, m.blurb)))));
   });
-  // web fonts load after the first build: rebuild text that was drawn with a fallback font
-  const fams = ['Pacifico', 'Great Vibes', 'Lobster', 'Bebas Neue', 'Anton', 'Righteous'];
-  try { Promise.all(fams.map((f) => document.fonts.load(`40px "${f}"`))).then(() => { dropCache((k) => /"font"|"initFont"|font\\"/.test(k)); clearDocCache(); app.scene.emit('change', { structure: true }); app.view?.redraw?.(); }).catch(() => {}); } catch { /* no font loading API */ }
+  // The decorative text fonts download only when something uses them (a name sign, a text part, the Text tool), not
+  // on every visit. Text drawn before they arrive uses a fallback font and is rebuilt once they're in.
+  app.needFonts = () => {
+    if (app._decorFonts) return app._decorFonts;
+    const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = DECOR_FONTS_CSS; document.head.append(l);
+    app._decorFonts = new Promise((res) => { l.onload = res; l.onerror = res; })
+      .then(() => Promise.all(DECOR_FAMS.map((f) => document.fonts.load(`40px "${f}"`))))
+      .then(() => { dropCache((k) => /"font"|"initFont"|font\\"/.test(k)); clearDocCache(); app.scene.emit('change', { structure: true }); app.view?.redraw?.(); })
+      .catch(() => {});
+    return app._decorFonts;
+  };
+  const usesDecor = () => app.scene.objects.some(function u(o) { return (o.params && DECOR_RE.test(JSON.stringify(o.params))) || (o.children || []).some(u); });
+  app.scene.on('change', () => { if (!app._decorFonts && usesDecor()) app.needFonts(); });
 }

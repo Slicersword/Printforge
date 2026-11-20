@@ -568,7 +568,7 @@ h3, .brand-name, .tool-head h3 { font-family: var(--font-num); letter-spacing: .
 .brand-name { font-weight: 600; font-size: 18px; }
 
 /* the floating view chrome sits over the plate like frosted acrylic */
-.toolbar, .viewnav, .selbar, .layerbar, .gclayers { background: color-mix(in srgb, var(--panel) 95%, transparent); backdrop-filter: blur(12px) saturate(1.2); -webkit-backdrop-filter: blur(12px) saturate(1.2); }
+/* (no frosted blur behind the view chrome: re-blurring the live 3D view every frame is expensive on laptop graphics) */
 
 /* sliding thumbs (motion.js) */
 .has-thumb { position: relative; }
@@ -614,6 +614,8 @@ h3, .brand-name, .tool-head h3 { font-family: var(--font-num); letter-spacing: .
 .pm-nozzle::before { content: ''; position: absolute; top: -10px; left: 0; width: 11px; height: 9px; background: var(--ink); clip-path: polygon(0 0, 100% 0, 66% 100%, 34% 100%); animation: pf-sweep .42s ease-in-out infinite alternate; }
 @keyframes pf-sweep { to { left: calc(100% - 11px); } }
 .print-mark[data-done="1"] .pm-nozzle { opacity: 0; }
+.print-mark[data-done="1"] .pm-nozzle::before, .loading.done .pm-nozzle::before { animation: none; }
+.loading[hidden] { display: none !important; }
 .loading .load-track { display: none; }
 .loading p { font-family: var(--font-num); letter-spacing: .02em; }
 .loading.done { display: flex; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .4s var(--ease-out), visibility 0s .4s; }

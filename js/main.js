@@ -53,7 +53,8 @@ class App {
     this._saveState('saved');
     this._changed(); this._selChanged();
     this.view.fit();
-    document.getElementById('loading').classList.add('done');
+    const ld = document.getElementById('loading'); ld.classList.add('done');
+    setTimeout(() => { ld.hidden = true; ld.querySelector('#printMark')?.remove(); }, 450); // gone for good: nothing keeps animating behind the app
     if (window.__pfInstall) this.installPrompt = window.__pfInstall;
     // on a Mac, show ⌘ instead of Ctrl in the visible shortcut hints
     if (IS_MAC) document.querySelectorAll('kbd').forEach((k) => { k.textContent = keyName(k.textContent); });
